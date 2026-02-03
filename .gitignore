@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Secrets (use Secrets.example as template)
+Secrets.swift
+
+# Xcode
+xcuserdata/
+*.xcscmblueprint
+DerivedData/
+build/
+
+# Swift Package Manager
+.build/
+.swiftpm/

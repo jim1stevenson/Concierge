@@ -1,0 +1,350 @@
+{
+  "name": "Concierge Apple TV",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "kiawah-data",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -464,
+        192
+      ],
+      "id": "21e9f4dc-1561-4482-aac4-afc70a743a92",
+      "name": "Webhook",
+      "webhookId": "947fd69e-05d5-4a51-81a0-a19772e7bc04"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=={{JSON.stringify({\n  guestName: $('Get row(s) in sheet').item.json.GuestName,\n  heroImage: $('Get row(s) in sheet').item.json.HeroImageURL,\n  wifiSSID: $('Get row(s) in sheet').item.json.WiFiSSID,\n  wifiPass: $('Get row(s) in sheet').item.json.WiFiPass,\n  places: $('Get row(s) in sheet1').all().map(i => ({\n    name: i.json.Name,\n    type: i.json.Type,\n    description: i.json.Description,\n    address: i.json.Address || \"\",\n    imageURL: i.json.ImageURL\n  })),\n  dining: {\n    title: $('Get row(s) in sheet2').item.json.dining_title || \"Dining\",\n    intro: $('Get row(s) in sheet2').item.json.dining_intro || \"\",\n    heroImage: $('Get row(s) in sheet2').item.json.dining_hero_image || \"\",\n    venues: $('Get row(s) in sheet3').all().map(v => ({\n      id: v.json.id,\n      name: v.json.name,\n      location: v.json.location || \"\",\n      type: v.json.type || \"\",\n      cuisines: v.json.cuisines ? v.json.cuisines.split(\"|\").map(s => s.trim()).filter(Boolean) : [],\n      price: v.json.price || \"\",\n      mealTimes: v.json.meal_times ? v.json.meal_times.split(\"|\").map(s => s.trim()).filter(Boolean) : [],\n      shortDescription: v.json.short_description || \"\",\n      heroImage: v.json.hero_image || \"\",\n      logoImage: v.json.logo_image || \"\",\n      statusLine: v.json.status_line || \"\",\n      hours: v.json.hours || \"\",\n      reservationRequired: v.json.reservation_required ? String(v.json.reservation_required).toLowerCase() === \"true\" : null,\n      reservationPhone: v.json.reservation_phone || \"\",\n      reservationUrl: v.json.reservation_url || \"\",\n      description: v.json.description || \"\",\n      attire: v.json.attire || \"\",\n      signatureTitle: v.json.signature_title || \"\",\n      signatureText: v.json.signature_text || \"\",\n      chefName: v.json.chef_name || \"\",\n      chefBio: v.json.chef_bio || \"\",\n      gallery: v.json.gallery ? v.json.gallery.split(\"|\").map(s => s.trim()).filter(Boolean) : []\n    }))\n  }\n}, null, 2)}}\n\n\n",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        944,
+        368
+      ],
+      "id": "63555944-1a70-4f3c-b3e1-84a0f6170853",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM",
+          "mode": "list",
+          "cachedResultName": "Build Dynamic Apple TV Concierge",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1635788217,
+          "mode": "list",
+          "cachedResultName": "VillaData",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit#gid=1635788217"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Property_ID",
+              "lookupValue": "Villa01"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        0
+      ],
+      "id": "7f5d4ca5-e98e-4e8f-8435-59729fa96ff9",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleApi": {
+          "id": "Vf0o6yGoi5CiRR1K",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM",
+          "mode": "list",
+          "cachedResultName": "Build Dynamic Apple TV Concierge",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 98233544,
+          "mode": "list",
+          "cachedResultName": "RecData",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit#gid=98233544"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        192
+      ],
+      "id": "c6fa8e29-c647-43d3-adb3-5b21f4eb64bf",
+      "name": "Get row(s) in sheet1",
+      "credentials": {
+        "googleApi": {
+          "id": "Vf0o6yGoi5CiRR1K",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        368,
+        288
+      ],
+      "id": "a1d1e93e-ec48-435b-9611-d8b97754c78a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM",
+          "mode": "list",
+          "cachedResultName": "Build Dynamic Apple TV Concierge",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1130006362,
+          "mode": "list",
+          "cachedResultName": "Dining_Config",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit#gid=1130006362"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        368
+      ],
+      "id": "74fffbe7-f8bd-499f-95c1-76db6332fd5e",
+      "name": "Get row(s) in sheet2",
+      "credentials": {
+        "googleApi": {
+          "id": "Vf0o6yGoi5CiRR1K",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM",
+          "mode": "list",
+          "cachedResultName": "Build Dynamic Apple TV Concierge",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 70982615,
+          "mode": "list",
+          "cachedResultName": "Dining_Venues",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1W6TitzOvgMmq0S_wgOuBy0hsg0K8Uovki3swZLnLpxM/edit#gid=70982615"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        560
+      ],
+      "id": "37c7c401-3229-4772-98fa-715adddd9352",
+      "name": "Get row(s) in sheet3",
+      "credentials": {
+        "googleApi": {
+          "id": "Vf0o6yGoi5CiRR1K",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        368,
+        480
+      ],
+      "id": "39d118d2-5152-44d3-a406-677a100c64c0",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        576,
+        368
+      ],
+      "id": "fb8ad2d3-80d6-40f7-8adb-64c2e687aa7b",
+      "name": "Merge2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get row(s) in sheet1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get row(s) in sheet2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get row(s) in sheet3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet2": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet3": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "173c9905-c84f-46bb-a462-e0ba927a801e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3fb341ec334a63f1265111cf86f87527bea35c2ddd11bbedaec417c8e678d8bc"
+  },
+  "id": "j387r2tZUpPMCpIeJwD9n",
+  "tags": []
+}
