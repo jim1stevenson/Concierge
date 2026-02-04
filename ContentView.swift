@@ -115,6 +115,22 @@ struct HowDoICard: Identifiable, Hashable {
 
 // --- Dining Models (Rich Data) ---
 
+struct GoogleReview: Identifiable, Codable, Hashable {
+    var id: String { "\(authorName)-\(rating)" }
+    let authorName: String
+    let authorPhoto: String?
+    let rating: Int
+    let text: String
+    let relativeTime: String
+
+    enum CodingKeys: String, CodingKey {
+        case authorName = "author_name"
+        case authorPhoto = "author_photo"
+        case rating, text
+        case relativeTime = "relative_time"
+    }
+}
+
 struct DiningVenue: Identifiable, Codable, Hashable {
     let id: String
     let name: String
@@ -138,6 +154,11 @@ struct DiningVenue: Identifiable, Codable, Hashable {
     let chefName: String
     let chefBio: String
     let gallery: [String]
+
+    // Google Places review data (optional)
+    let googleRating: Double?
+    let googleReviewCount: Int?
+    let googleReviews: [GoogleReview]?
 }
 
 struct DiningSection: Codable {
@@ -2006,6 +2027,101 @@ struct DiningVenueDetailView: View {
                         .buttonStyle(.card)
                     }
 
+                    // Google Reviews Section
+                    if let rating = venue.googleRating, let reviewCount = venue.googleReviewCount {
+                        VStack(alignment: .leading, spacing: 25) {
+                            // Header with overall rating
+                            HStack(spacing: 20) {
+                                Label("Reviews", systemImage: "star.bubble.fill")
+                                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.primary)
+
+                                Spacer()
+
+                                HStack(spacing: 8) {
+                                    HStack(spacing: 4) {
+                                        ForEach(0..<5) { index in
+                                            Image(systemName: starIcon(for: index, rating: rating))
+                                                .foregroundColor(.yellow)
+                                                .font(.system(size: 22))
+                                        }
+                                    }
+                                    Text(String(format: "%.1f", rating))
+                                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                                        .foregroundColor(.primary)
+                                    Text("(\(reviewCount))")
+                                        .font(.system(size: 20, weight: .light))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 35)
+
+                            // Individual reviews
+                            if let reviews = venue.googleReviews, !reviews.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 20) {
+                                        ForEach(reviews) { review in
+                                            Button(action: {}) {
+                                                VStack(alignment: .leading, spacing: 15) {
+                                                    // Author and rating
+                                                    HStack(spacing: 12) {
+                                                        if let photoUrl = review.authorPhoto, !photoUrl.isEmpty {
+                                                            AsyncImage(url: URL(string: photoUrl)) { phase in
+                                                                if let image = phase.image {
+                                                                    image.resizable().aspectRatio(contentMode: .fill)
+                                                                } else {
+                                                                    Circle().fill(Color.gray.opacity(0.3))
+                                                                }
+                                                            }
+                                                            .frame(width: 50, height: 50)
+                                                            .clipShape(Circle())
+                                                        } else {
+                                                            Image(systemName: "person.circle.fill")
+                                                                .font(.system(size: 40))
+                                                                .foregroundColor(.gray)
+                                                        }
+
+                                                        VStack(alignment: .leading, spacing: 4) {
+                                                            Text(review.authorName)
+                                                                .font(.system(size: 20, weight: .semibold))
+                                                                .foregroundColor(.primary)
+                                                                .lineLimit(1)
+                                                            HStack(spacing: 3) {
+                                                                ForEach(0..<5) { index in
+                                                                    Image(systemName: index < review.rating ? "star.fill" : "star")
+                                                                        .foregroundColor(.yellow)
+                                                                        .font(.system(size: 14))
+                                                                }
+                                                                Text(review.relativeTime)
+                                                                    .font(.system(size: 14, weight: .light))
+                                                                    .foregroundColor(.secondary)
+                                                                    .padding(.leading, 5)
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Review text
+                                                    Text(review.text)
+                                                        .font(.system(size: 18, weight: .light))
+                                                        .foregroundColor(.primary.opacity(0.85))
+                                                        .lineLimit(5)
+                                                        .multilineTextAlignment(.leading)
+                                                        .lineSpacing(4)
+                                                }
+                                                .padding(25)
+                                                .frame(width: 400, alignment: .topLeading)
+                                                .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial))
+                                            }
+                                            .buttonStyle(.card)
+                                        }
+                                    }
+                                    .padding(.horizontal, 35)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: 1200)
+                    }
+
                     // Photo Gallery - individual images are focusable
                     if !venue.gallery.isEmpty && venue.gallery.count > 1 {
                         VStack(alignment: .leading, spacing: 20) {
@@ -2042,6 +2158,17 @@ struct DiningVenueDetailView: View {
             }
         }
         .preferredColorScheme(.light)
+    }
+
+    private func starIcon(for index: Int, rating: Double) -> String {
+        let threshold = Double(index) + 1
+        if rating >= threshold {
+            return "star.fill"
+        } else if rating >= threshold - 0.5 {
+            return "star.leadinghalf.filled"
+        } else {
+            return "star"
+        }
     }
 }
 
