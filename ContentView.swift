@@ -67,6 +67,9 @@ struct ForecastDay: Identifiable {
     let low: Int
     let icon: String
     let condition: String
+    let precipChance: Int
+    let sunrise: String
+    let sunset: String
 }
 
 struct HourlyForecast: Identifiable {
@@ -75,6 +78,13 @@ struct HourlyForecast: Identifiable {
     let temp: Int
     let icon: String
     let condition: String
+    let precipChance: Int
+}
+
+struct MoonPhase {
+    let phase: Double      // 0.0 to 1.0 (0=new, 0.5=full)
+    let name: String       // "New Moon", "Waxing Crescent", etc.
+    let icon: String       // SF Symbol name
 }
 
 struct SunTimes {
@@ -158,13 +168,13 @@ class RentalViewModel: ObservableObject {
     @Published var currentCondition: String = ""
     @Published var currentIcon: String = "cloud.fill"
     @Published var sunTimes: SunTimes = SunTimes(sunrise: "--", sunset: "--")
+    @Published var moonPhase: MoonPhase = MoonPhase(phase: 0, name: "—", icon: "moon.fill")
     @Published var tideEvents: [TideEvent] = []
     
     @Published var settleInCards: [SettleInCard] = []
     
     private let lat = 32.6082
     private let lon = -80.0848
-    private let weatherAPIKey = Secrets.weatherAPIKey
     private let noaaStation = "8667062"
     
     // MARK: - Fetch All Data
@@ -172,7 +182,6 @@ class RentalViewModel: ObservableObject {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.fetchRentalData() }
             group.addTask { await self.fetchWeather() }
-            group.addTask { await self.fetchSunTimes() }
             group.addTask { await self.fetchTides() }
         }
     }
@@ -235,125 +244,140 @@ class RentalViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Weather
+    // MARK: - Weather (Open-Meteo API)
     func fetchWeather() async {
-        let urlString = "https://api.openweathermap.org/data/2.5/forecast?lat=\(lat)&lon=\(lon)&appid=\(weatherAPIKey)&units=imperial&cnt=40"
+        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&temperature_unit=fahrenheit&timezone=America/New_York&forecast_days=7"
         guard let url = URL(string: urlString) else { return }
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let list = json["list"] as? [[String: Any]] else { return }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
+            // Parse current conditions
+            var currentTemperature = 0
+            var currentWeatherCode = 0
+            var isDay = true
+            if let current = json["current"] as? [String: Any] {
+                currentTemperature = Int((current["temperature_2m"] as? Double ?? 0).rounded())
+                currentWeatherCode = current["weather_code"] as? Int ?? 0
+                isDay = (current["is_day"] as? Int ?? 1) == 1
+            }
+
+            // Parse daily forecast
             let dayFormatter = DateFormatter()
             dayFormatter.dateFormat = "yyyy-MM-dd"
 
-            let dateTimeFormatter = DateFormatter()
-            dateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+            timeFormatter.timeZone = TimeZone(identifier: "America/New_York")
 
-            var dailyData: [String: (highs: [Double], lows: [Double], icon: String, condition: String)] = [:]
-            var hourlyData: [HourlyForecast] = []
+            let displayTimeFormatter = DateFormatter()
+            displayTimeFormatter.dateFormat = "h:mm a"
+            displayTimeFormatter.timeZone = TimeZone(identifier: "America/New_York")
 
-            for (index, item) in list.enumerated() {
-                guard let dtTxt = item["dt_txt"] as? String,
-                      let main = item["main"] as? [String: Any],
-                      let tempMax = main["temp_max"] as? Double,
-                      let tempMin = main["temp_min"] as? Double,
-                      let temp = main["temp"] as? Double,
-                      let weatherArr = item["weather"] as? [[String: Any]],
-                      let weather = weatherArr.first,
-                      let owIcon = weather["icon"] as? String,
-                      let desc = weather["main"] as? String else { continue }
+            var forecastDays: [ForecastDay] = []
+            var firstDaySunrise = "--"
+            var firstDaySunset = "--"
 
-                // Build 3-hour forecast (first 8 entries = 24 hours)
-                if index < 8, let time = dateTimeFormatter.date(from: dtTxt) {
-                    hourlyData.append(HourlyForecast(
-                        time: time,
-                        temp: Int(temp.rounded()),
-                        icon: Self.sfSymbol(for: owIcon),
-                        condition: desc
+            if let daily = json["daily"] as? [String: Any],
+               let times = daily["time"] as? [String],
+               let highs = daily["temperature_2m_max"] as? [Double],
+               let lows = daily["temperature_2m_min"] as? [Double],
+               let codes = daily["weather_code"] as? [Int],
+               let precipChances = daily["precipitation_probability_max"] as? [Int],
+               let sunrises = daily["sunrise"] as? [String],
+               let sunsets = daily["sunset"] as? [String] {
+
+                for i in 0..<min(7, times.count) {
+                    guard let date = dayFormatter.date(from: times[i]) else { continue }
+
+                    // Format sunrise/sunset times
+                    var sunriseDisplay = sunrises[i]
+                    var sunsetDisplay = sunsets[i]
+                    if let sunriseDate = timeFormatter.date(from: sunrises[i]) {
+                        sunriseDisplay = displayTimeFormatter.string(from: sunriseDate)
+                    }
+                    if let sunsetDate = timeFormatter.date(from: sunsets[i]) {
+                        sunsetDisplay = displayTimeFormatter.string(from: sunsetDate)
+                    }
+
+                    if i == 0 {
+                        firstDaySunrise = sunriseDisplay
+                        firstDaySunset = sunsetDisplay
+                    }
+
+                    forecastDays.append(ForecastDay(
+                        date: date,
+                        high: Int(highs[i].rounded()),
+                        low: Int(lows[i].rounded()),
+                        icon: Self.sfSymbolForWMO(codes[i], isDay: true),
+                        condition: Self.conditionTextForWMO(codes[i]),
+                        precipChance: precipChances[i],
+                        sunrise: sunriseDisplay,
+                        sunset: sunsetDisplay
                     ))
                 }
+            }
 
-                // Build daily forecast
-                let dayKey = String(dtTxt.prefix(10))
-                var entry = dailyData[dayKey] ?? (highs: [], lows: [], icon: owIcon, condition: desc)
-                entry.highs.append(tempMax)
-                entry.lows.append(tempMin)
-                if dtTxt.contains("12:00:00") {
-                    entry.icon = owIcon
-                    entry.condition = desc
+            // Parse hourly forecast (next 24 hours)
+            let hourlyFormatter = ISO8601DateFormatter()
+            hourlyFormatter.formatOptions = [.withFullDate, .withTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
+
+            var hourlyData: [HourlyForecast] = []
+            if let hourly = json["hourly"] as? [String: Any],
+               let times = hourly["time"] as? [String],
+               let temps = hourly["temperature_2m"] as? [Double],
+               let codes = hourly["weather_code"] as? [Int],
+               let precipChances = hourly["precipitation_probability"] as? [Int] {
+
+                let now = Date()
+                let calendar = Calendar.current
+                var count = 0
+
+                for i in 0..<times.count where count < 8 {
+                    // Parse time in local timezone format from Open-Meteo
+                    let timeStr = times[i]
+                    guard let time = timeFormatter.date(from: timeStr) else { continue }
+
+                    // Skip past hours
+                    if time < now && !calendar.isDate(time, equalTo: now, toGranularity: .hour) {
+                        continue
+                    }
+
+                    let hour = calendar.component(.hour, from: time)
+                    let hourIsDay = hour >= 6 && hour < 20
+
+                    hourlyData.append(HourlyForecast(
+                        time: time,
+                        temp: Int(temps[i].rounded()),
+                        icon: Self.sfSymbolForWMO(codes[i], isDay: hourIsDay),
+                        condition: Self.conditionTextForWMO(codes[i]),
+                        precipChance: precipChances[i]
+                    ))
+                    count += 1
                 }
-                dailyData[dayKey] = entry
             }
 
-            let sortedDays = dailyData.keys.sorted().prefix(5)
-            var forecastDays: [ForecastDay] = []
+            // Calculate moon phase for today
+            let todayMoonPhase = calculateMoonPhase(for: Date())
 
-            for dayKey in sortedDays {
-                guard let entry = dailyData[dayKey],
-                      let date = dayFormatter.date(from: dayKey) else { continue }
-                forecastDays.append(ForecastDay(
-                    date: date,
-                    high: Int(entry.highs.max() ?? 0),
-                    low: Int(entry.lows.min() ?? 0),
-                    icon: Self.sfSymbol(for: entry.icon),
-                    condition: entry.condition
-                ))
-            }
+            let finalForecast = forecastDays
+            let finalHourly = hourlyData
+            let finalSunrise = firstDaySunrise
+            let finalSunset = firstDaySunset
 
             await MainActor.run {
-                self.forecast = forecastDays
-                self.hourlyForecast = hourlyData
-                self.currentTemp = forecastDays.first?.high ?? 0
-                self.currentLow = forecastDays.first?.low ?? 0
-                self.currentCondition = forecastDays.first?.condition ?? "—"
-                self.currentIcon = forecastDays.first?.icon ?? "cloud.fill"
+                self.forecast = finalForecast
+                self.hourlyForecast = finalHourly
+                self.currentTemp = currentTemperature
+                self.currentLow = finalForecast.first?.low ?? 0
+                self.currentCondition = Self.conditionTextForWMO(currentWeatherCode)
+                self.currentIcon = Self.sfSymbolForWMO(currentWeatherCode, isDay: isDay)
+                self.sunTimes = SunTimes(sunrise: finalSunrise, sunset: finalSunset)
+                self.moonPhase = todayMoonPhase
             }
         } catch {
             print("❌ Weather Error: \(error)")
-        }
-    }
-    
-    // MARK: - Sunrise / Sunset
-    // FIX: Use formatted=0 to get ISO times, then format ourselves WITHOUT seconds
-    func fetchSunTimes() async {
-        let urlString = "https://api.sunrise-sunset.org/json?lat=\(lat)&lng=\(lon)&formatted=0&tzid=America/New_York"
-        guard let url = URL(string: urlString) else { return }
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let results = json["results"] as? [String: Any],
-                  let sunriseStr = results["sunrise"] as? String,
-                  let sunsetStr = results["sunset"] as? String else { return }
-            
-            // Parse ISO 8601 dates and format to h:mm a (no seconds)
-            // Try with fractional seconds first, then without
-            let isoFrac = ISO8601DateFormatter()
-            isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let isoPlain = ISO8601DateFormatter()
-            isoPlain.formatOptions = [.withInternetDateTime]
-            
-            let displayFormatter = DateFormatter()
-            displayFormatter.dateFormat = "h:mm a"
-            displayFormatter.timeZone = TimeZone(identifier: "America/New_York")
-            
-            var sunrise = sunriseStr
-            var sunset = sunsetStr
-            
-            if let d = isoFrac.date(from: sunriseStr) ?? isoPlain.date(from: sunriseStr) {
-                sunrise = displayFormatter.string(from: d)
-            }
-            if let d = isoFrac.date(from: sunsetStr) ?? isoPlain.date(from: sunsetStr) {
-                sunset = displayFormatter.string(from: d)
-            }
-            
-            await MainActor.run {
-                self.sunTimes = SunTimes(sunrise: sunrise, sunset: sunset)
-            }
-        } catch {
-            print("❌ Sunrise Error: \(error)")
         }
     }
     
@@ -431,7 +455,7 @@ class RentalViewModel: ObservableObject {
         }
     }
     
-    // MARK: - OpenWeather icon to SF Symbol
+    // MARK: - OpenWeather icon to SF Symbol (legacy, kept for reference)
     static func sfSymbol(for owIcon: String) -> String {
         switch owIcon {
         case "01d": return "sun.max.fill"
@@ -447,6 +471,125 @@ class RentalViewModel: ObservableObject {
         case "13d", "13n": return "snowflake"
         case "50d", "50n": return "cloud.fog.fill"
         default: return "cloud.fill"
+        }
+    }
+
+    // MARK: - WMO Weather Code to SF Symbol (Open-Meteo)
+    static func sfSymbolForWMO(_ code: Int, isDay: Bool) -> String {
+        switch code {
+        case 0:  // Clear sky
+            return isDay ? "sun.max.fill" : "moon.fill"
+        case 1:  // Mainly clear
+            return isDay ? "sun.max.fill" : "moon.fill"
+        case 2:  // Partly cloudy
+            return isDay ? "cloud.sun.fill" : "cloud.moon.fill"
+        case 3:  // Overcast
+            return "cloud.fill"
+        case 45, 48:  // Fog
+            return "cloud.fog.fill"
+        case 51, 53, 55:  // Drizzle
+            return "cloud.drizzle.fill"
+        case 56, 57:  // Freezing drizzle
+            return "cloud.sleet.fill"
+        case 61, 63, 65:  // Rain
+            return isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill"
+        case 66, 67:  // Freezing rain
+            return "cloud.sleet.fill"
+        case 71, 73, 75:  // Snowfall
+            return "snowflake"
+        case 77:  // Snow grains
+            return "snowflake"
+        case 80, 81, 82:  // Rain showers
+            return isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill"
+        case 85, 86:  // Snow showers
+            return "cloud.snow.fill"
+        case 95:  // Thunderstorm
+            return "cloud.bolt.fill"
+        case 96, 99:  // Thunderstorm with hail
+            return "cloud.bolt.rain.fill"
+        default:
+            return "cloud.fill"
+        }
+    }
+
+    // MARK: - WMO Weather Code to Condition Text
+    static func conditionTextForWMO(_ code: Int) -> String {
+        switch code {
+        case 0: return "Clear"
+        case 1: return "Mostly Clear"
+        case 2: return "Partly Cloudy"
+        case 3: return "Overcast"
+        case 45: return "Fog"
+        case 48: return "Icy Fog"
+        case 51: return "Light Drizzle"
+        case 53: return "Drizzle"
+        case 55: return "Heavy Drizzle"
+        case 56, 57: return "Freezing Drizzle"
+        case 61: return "Light Rain"
+        case 63: return "Rain"
+        case 65: return "Heavy Rain"
+        case 66, 67: return "Freezing Rain"
+        case 71: return "Light Snow"
+        case 73: return "Snow"
+        case 75: return "Heavy Snow"
+        case 77: return "Snow Grains"
+        case 80: return "Light Showers"
+        case 81: return "Showers"
+        case 82: return "Heavy Showers"
+        case 85: return "Light Snow Showers"
+        case 86: return "Snow Showers"
+        case 95: return "Thunderstorm"
+        case 96, 99: return "Thunderstorm"
+        default: return "Unknown"
+        }
+    }
+
+    // MARK: - Moon Phase Calculation
+    func calculateMoonPhase(for date: Date) -> MoonPhase {
+        // Reference: Known new moon date - Jan 6, 2000 18:14 UTC
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let referenceComponents = DateComponents(
+            calendar: calendar,
+            timeZone: TimeZone(identifier: "UTC"),
+            year: 2000, month: 1, day: 6, hour: 18, minute: 14
+        )
+        guard let referenceNewMoon = referenceComponents.date else {
+            return MoonPhase(phase: 0, name: "Unknown", icon: "moon.fill")
+        }
+
+        let synodicMonth = 29.53058867  // Average lunar cycle in days
+
+        let daysSinceReference = date.timeIntervalSince(referenceNewMoon) / 86400
+        var cyclePosition = daysSinceReference.truncatingRemainder(dividingBy: synodicMonth)
+        if cyclePosition < 0 { cyclePosition += synodicMonth }
+        let phase = cyclePosition / synodicMonth  // 0.0 to 1.0
+
+        let (name, icon) = phaseNameAndIcon(for: phase)
+
+        return MoonPhase(phase: phase, name: name, icon: icon)
+    }
+
+    private func phaseNameAndIcon(for phase: Double) -> (String, String) {
+        switch phase {
+        case 0.00..<0.03, 0.97...1.0:
+            return ("New Moon", "moonphase.new.moon")
+        case 0.03..<0.22:
+            return ("Waxing Crescent", "moonphase.waxing.crescent")
+        case 0.22..<0.28:
+            return ("First Quarter", "moonphase.first.quarter")
+        case 0.28..<0.47:
+            return ("Waxing Gibbous", "moonphase.waxing.gibbous")
+        case 0.47..<0.53:
+            return ("Full Moon", "moonphase.full.moon")
+        case 0.53..<0.72:
+            return ("Waning Gibbous", "moonphase.waning.gibbous")
+        case 0.72..<0.78:
+            return ("Last Quarter", "moonphase.last.quarter")
+        case 0.78..<0.97:
+            return ("Waning Crescent", "moonphase.waning.crescent")
+        default:
+            return ("Moon", "moon.fill")
         }
     }
 }
@@ -668,7 +811,7 @@ struct WeatherDetailView: View {
                             } else {
                                 HStack(spacing: 20) {
                                     ForEach(viewModel.hourlyForecast) { hour in
-                                        VStack(spacing: 12) {
+                                        VStack(spacing: 10) {
                                             Text(hourLabel(hour.time))
                                                 .font(.system(size: 20, weight: .medium, design: .rounded))
                                                 .foregroundColor(.white.opacity(0.7))
@@ -680,6 +823,19 @@ struct WeatherDetailView: View {
                                             Text("\(hour.temp)°")
                                                 .font(.system(size: 26, weight: .semibold, design: .rounded))
                                                 .foregroundColor(.white)
+
+                                            if hour.precipChance > 0 {
+                                                HStack(spacing: 3) {
+                                                    Image(systemName: "drop.fill")
+                                                        .font(.system(size: 12))
+                                                        .foregroundColor(.cyan)
+                                                    Text("\(hour.precipChance)%")
+                                                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                                                        .foregroundColor(.cyan)
+                                                }
+                                            } else {
+                                                Spacer().frame(height: 18)
+                                            }
                                         }
                                         .frame(maxWidth: .infinity)
                                     }
@@ -692,10 +848,10 @@ struct WeatherDetailView: View {
                     }
                     .buttonStyle(.card)
 
-                    // 5-Day Forecast
+                    // 7-Day Forecast
                     Button(action: {}) {
                         VStack(alignment: .leading, spacing: 25) {
-                            Label("5-Day Forecast", systemImage: "calendar")
+                            Label("7-Day Forecast", systemImage: "calendar")
                                 .font(.system(size: 28, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white.opacity(0.7))
 
@@ -704,24 +860,37 @@ struct WeatherDetailView: View {
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding()
                             } else {
-                                HStack(spacing: 30) {
+                                HStack(spacing: 25) {
                                     ForEach(viewModel.forecast) { day in
-                                        VStack(spacing: 15) {
+                                        VStack(spacing: 12) {
                                             Text(dayName(day.date))
-                                                .font(.system(size: 24, weight: .medium, design: .rounded))
+                                                .font(.system(size: 22, weight: .medium, design: .rounded))
                                                 .foregroundColor(.white.opacity(0.7))
 
                                             Image(systemName: day.icon)
                                                 .renderingMode(.original)
-                                                .font(.system(size: 40))
+                                                .font(.system(size: 36))
 
                                             Text("\(day.high)°")
-                                                .font(.system(size: 32, weight: .semibold, design: .rounded))
+                                                .font(.system(size: 28, weight: .semibold, design: .rounded))
                                                 .foregroundColor(.white)
 
                                             Text("\(day.low)°")
-                                                .font(.system(size: 24, weight: .light, design: .rounded))
+                                                .font(.system(size: 22, weight: .light, design: .rounded))
                                                 .foregroundColor(.white.opacity(0.5))
+
+                                            if day.precipChance > 0 {
+                                                HStack(spacing: 3) {
+                                                    Image(systemName: "drop.fill")
+                                                        .font(.system(size: 12))
+                                                        .foregroundColor(.cyan)
+                                                    Text("\(day.precipChance)%")
+                                                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                                                        .foregroundColor(.cyan)
+                                                }
+                                            } else {
+                                                Spacer().frame(height: 18)
+                                            }
                                         }
                                         .frame(maxWidth: .infinity)
                                     }
@@ -729,12 +898,12 @@ struct WeatherDetailView: View {
                             }
                         }
                         .padding(35)
-                        .frame(maxWidth: 1000)
+                        .frame(maxWidth: 1100)
                         .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
                     }
                     .buttonStyle(.card)
 
-                    HStack(spacing: 30) {
+                    HStack(spacing: 25) {
                         // Sunrise / Sunset
                         Button(action: {}) {
                             VStack(alignment: .leading, spacing: 20) {
@@ -742,33 +911,60 @@ struct WeatherDetailView: View {
                                     .font(.system(size: 24, weight: .semibold, design: .rounded))
                                     .foregroundColor(.white.opacity(0.7))
 
-                                HStack(spacing: 50) {
+                                HStack(spacing: 40) {
                                     VStack(spacing: 10) {
                                         Image(systemName: "sunrise.fill")
                                             .renderingMode(.original)
-                                            .font(.system(size: 45))
+                                            .font(.system(size: 40))
                                         Text(viewModel.sunTimes.sunrise)
-                                            .font(.system(size: 28, weight: .medium, design: .rounded))
+                                            .font(.system(size: 24, weight: .medium, design: .rounded))
                                             .foregroundColor(.white)
                                         Text("Sunrise")
-                                            .font(.system(size: 18, weight: .light))
+                                            .font(.system(size: 16, weight: .light))
                                             .foregroundColor(.white.opacity(0.5))
                                     }
 
                                     VStack(spacing: 10) {
                                         Image(systemName: "sunset.fill")
                                             .renderingMode(.original)
-                                            .font(.system(size: 45))
+                                            .font(.system(size: 40))
                                         Text(viewModel.sunTimes.sunset)
-                                            .font(.system(size: 28, weight: .medium, design: .rounded))
+                                            .font(.system(size: 24, weight: .medium, design: .rounded))
                                             .foregroundColor(.white)
                                         Text("Sunset")
-                                            .font(.system(size: 18, weight: .light))
+                                            .font(.system(size: 16, weight: .light))
                                             .foregroundColor(.white.opacity(0.5))
                                     }
                                 }
                             }
-                            .padding(35)
+                            .padding(30)
+                            .frame(maxWidth: .infinity)
+                            .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
+                        }
+                        .buttonStyle(.card)
+
+                        // Moon Phase
+                        Button(action: {}) {
+                            VStack(alignment: .leading, spacing: 20) {
+                                Label("Moon", systemImage: "moon.stars.fill")
+                                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.7))
+
+                                VStack(spacing: 12) {
+                                    Image(systemName: viewModel.moonPhase.icon)
+                                        .font(.system(size: 55))
+                                        .foregroundColor(.white)
+
+                                    Text(viewModel.moonPhase.name)
+                                        .font(.system(size: 24, weight: .medium, design: .rounded))
+                                        .foregroundColor(.white)
+
+                                    Text("\(illuminationPercent(viewModel.moonPhase.phase))% illuminated")
+                                        .font(.system(size: 16, weight: .light))
+                                        .foregroundColor(.white.opacity(0.5))
+                                }
+                            }
+                            .padding(30)
                             .frame(maxWidth: .infinity)
                             .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
                         }
@@ -791,26 +987,26 @@ struct WeatherDetailView: View {
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding()
                                 } else {
-                                    VStack(spacing: 15) {
+                                    VStack(spacing: 12) {
                                         ForEach(viewModel.tideEvents) { tide in
-                                            HStack(spacing: 15) {
+                                            HStack(spacing: 12) {
                                                 Image(systemName: tide.type == "High" ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
                                                     .foregroundColor(tide.type == "High" ? .cyan : .blue)
-                                                    .font(.system(size: 28))
+                                                    .font(.system(size: 24))
 
                                                 Text(tide.type)
-                                                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                                                    .font(.system(size: 20, weight: .semibold, design: .rounded))
                                                     .foregroundColor(.white)
-                                                    .frame(width: 60, alignment: .leading)
+                                                    .frame(width: 50, alignment: .leading)
 
                                                 Spacer()
 
                                                 Text(tide.height)
-                                                    .font(.system(size: 20, weight: .light, design: .rounded))
+                                                    .font(.system(size: 18, weight: .light, design: .rounded))
                                                     .foregroundColor(.white.opacity(0.7))
 
                                                 Text(tide.time)
-                                                    .font(.system(size: 20, weight: .medium, design: .rounded))
+                                                    .font(.system(size: 18, weight: .medium, design: .rounded))
                                                     .foregroundColor(.white)
                                             }
 
@@ -821,13 +1017,13 @@ struct WeatherDetailView: View {
                                     }
                                 }
                             }
-                            .padding(35)
+                            .padding(30)
                             .frame(maxWidth: .infinity)
                             .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
                         }
                         .buttonStyle(.card)
                     }
-                    .frame(maxWidth: 1000)
+                    .frame(maxWidth: 1100)
 
                     Spacer(minLength: 60)
                 }
@@ -854,6 +1050,14 @@ struct WeatherDetailView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "ha"
         return formatter.string(from: date).lowercased()
+    }
+
+    private func illuminationPercent(_ phase: Double) -> Int {
+        // Phase 0 or 1 = new moon (0% illuminated)
+        // Phase 0.5 = full moon (100% illuminated)
+        // Use cosine function to calculate illumination
+        let illumination = (1 - cos(phase * 2 * .pi)) / 2
+        return Int((illumination * 100).rounded())
     }
 }
 
