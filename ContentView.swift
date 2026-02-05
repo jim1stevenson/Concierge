@@ -135,25 +135,16 @@ struct DiningVenue: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let location: String
-    let type: String
     let cuisines: [String]
     let price: String
     let mealTimes: [String]
     let shortDescription: String
     let heroImage: String
     let logoImage: String
-    let statusLine: String
     let hours: String
     let reservationRequired: Bool?
     let reservationPhone: String
-    let reservationUrl: String
-    let description: String
     let attire: String
-    let signatureTitle: String
-    let signatureText: String
-    let chefName: String
-    let chefBio: String
-    let gallery: [String]
 
     // Google Places review data (optional)
     let googleRating: Double?
@@ -249,7 +240,7 @@ class RentalViewModel: ObservableObject {
                              content: "Pool hours: 8 AM – 10 PM\nHot tub: replace cover after each use.\nHeater controls are on the back wall panel near the outdoor shower.\nNo glass near the pool area.")
             ]
             
-            await MainActor.run {
+            await MainActor.run { [downloadedImage] in
                 self.guestName = decoded.guestName
                 self.heroImageURL = decoded.heroImage
                 self.heroImage = downloadedImage
@@ -275,13 +266,17 @@ class RentalViewModel: ObservableObject {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
             // Parse current conditions
-            var currentTemperature = 0
-            var currentWeatherCode = 0
-            var isDay = true
+            let currentTemperature: Int
+            let currentWeatherCode: Int
+            let isDay: Bool
             if let current = json["current"] as? [String: Any] {
                 currentTemperature = Int((current["temperature_2m"] as? Double ?? 0).rounded())
                 currentWeatherCode = current["weather_code"] as? Int ?? 0
                 isDay = (current["is_day"] as? Int ?? 1) == 1
+            } else {
+                currentTemperature = 0
+                currentWeatherCode = 0
+                isDay = true
             }
 
             // Parse daily forecast
@@ -386,14 +381,17 @@ class RentalViewModel: ObservableObject {
             let finalHourly = hourlyData
             let finalSunrise = firstDaySunrise
             let finalSunset = firstDaySunset
+            let finalCurrentTemp = currentTemperature
+            let finalCurrentWeatherCode = currentWeatherCode
+            let finalIsDay = isDay
 
             await MainActor.run {
                 self.forecast = finalForecast
                 self.hourlyForecast = finalHourly
-                self.currentTemp = currentTemperature
+                self.currentTemp = finalCurrentTemp
                 self.currentLow = finalForecast.first?.low ?? 0
-                self.currentCondition = Self.conditionTextForWMO(currentWeatherCode)
-                self.currentIcon = Self.sfSymbolForWMO(currentWeatherCode, isDay: isDay)
+                self.currentCondition = Self.conditionTextForWMO(finalCurrentWeatherCode)
+                self.currentIcon = Self.sfSymbolForWMO(finalCurrentWeatherCode, isDay: finalIsDay)
                 self.sunTimes = SunTimes(sunrise: finalSunrise, sunset: finalSunset)
                 self.moonPhase = todayMoonPhase
             }
@@ -468,7 +466,7 @@ class RentalViewModel: ObservableObject {
             
             print("🌊 Parsed \(events.count) tide events")
             
-            await MainActor.run {
+            await MainActor.run { [events] in
                 self.tideEvents = events
             }
         } catch {
@@ -792,28 +790,81 @@ struct WeatherDetailView: View {
 
             ScrollView {
                 VStack(spacing: 40) {
-                    // Current Weather Header
+                    // Current Weather Header with Sun & Moon
                     Button(action: {}) {
-                        HStack(spacing: 40) {
-                            Image(systemName: viewModel.currentIcon)
-                                .renderingMode(.original)
-                                .font(.system(size: 100))
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(alignment: .firstTextBaseline, spacing: 15) {
-                                    Text("\(viewModel.currentTemp)°")
-                                        .font(.system(size: 90, weight: .semibold, design: .rounded))
-                                    Text("\(viewModel.currentLow)°")
-                                        .font(.system(size: 50, weight: .light, design: .rounded))
+                        HStack(spacing: 0) {
+                            // Sunrise / Sunset - Left
+                            HStack(spacing: 30) {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "sunrise.fill")
+                                        .renderingMode(.original)
+                                        .font(.system(size: 36))
+                                    Text(viewModel.sunTimes.sunrise)
+                                        .font(.system(size: 22, weight: .medium, design: .rounded))
+                                        .foregroundColor(.white)
+                                    Text("Sunrise")
+                                        .font(.system(size: 14, weight: .light))
                                         .foregroundColor(.white.opacity(0.5))
                                 }
-                                Text(viewModel.currentCondition)
-                                    .font(.system(size: 32, weight: .medium, design: .rounded))
-                                    .textCase(.uppercase)
+
+                                VStack(spacing: 8) {
+                                    Image(systemName: "sunset.fill")
+                                        .renderingMode(.original)
+                                        .font(.system(size: 36))
+                                    Text(viewModel.sunTimes.sunset)
+                                        .font(.system(size: 22, weight: .medium, design: .rounded))
+                                        .foregroundColor(.white)
+                                    Text("Sunset")
+                                        .font(.system(size: 14, weight: .light))
+                                        .foregroundColor(.white.opacity(0.5))
+                                }
                             }
+                            .frame(width: 220)
+
+                            Spacer()
+
+                            // Current Weather - Center
+                            HStack(spacing: 30) {
+                                Image(systemName: viewModel.currentIcon)
+                                    .renderingMode(.original)
+                                    .font(.system(size: 90))
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                        Text("\(viewModel.currentTemp)°")
+                                            .font(.system(size: 80, weight: .semibold, design: .rounded))
+                                        Text("\(viewModel.currentLow)°")
+                                            .font(.system(size: 44, weight: .light, design: .rounded))
+                                            .foregroundColor(.white.opacity(0.5))
+                                    }
+                                    Text(viewModel.currentCondition)
+                                        .font(.system(size: 28, weight: .medium, design: .rounded))
+                                        .textCase(.uppercase)
+                                }
+                            }
+
+                            Spacer()
+
+                            // Moon Phase - Right
+                            VStack(spacing: 8) {
+                                Image(systemName: viewModel.moonPhase.icon)
+                                    .font(.system(size: 50))
+                                    .foregroundColor(.white)
+
+                                Text(viewModel.moonPhase.name)
+                                    .font(.system(size: 20, weight: .medium, design: .rounded))
+                                    .foregroundColor(.white)
+
+                                Text("\(illuminationPercent(viewModel.moonPhase.phase))%")
+                                    .font(.system(size: 14, weight: .light))
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                            .frame(width: 220)
                         }
                         .foregroundColor(.white)
-                        .padding(40)
+                        .padding(.horizontal, 50)
+                        .padding(.vertical, 35)
+                        .frame(maxWidth: 1200)
                         .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
                     }
                     .buttonStyle(.card)
@@ -924,127 +975,58 @@ struct WeatherDetailView: View {
                     }
                     .buttonStyle(.card)
 
-                    HStack(spacing: 25) {
-                        // Sunrise / Sunset
-                        Button(action: {}) {
-                            VStack(alignment: .leading, spacing: 20) {
-                                Label("Sun", systemImage: "sun.horizon.fill")
-                                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.7))
+                    // Tides - Centered, Horizontal Layout
+                    Button(action: {}) {
+                        VStack(spacing: 20) {
+                            Label("Today's Tides", systemImage: "water.waves")
+                                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.7))
 
-                                HStack(spacing: 40) {
-                                    VStack(spacing: 10) {
-                                        Image(systemName: "sunrise.fill")
-                                            .renderingMode(.original)
-                                            .font(.system(size: 40))
-                                        Text(viewModel.sunTimes.sunrise)
-                                            .font(.system(size: 24, weight: .medium, design: .rounded))
-                                            .foregroundColor(.white)
-                                        Text("Sunrise")
-                                            .font(.system(size: 16, weight: .light))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    }
-
-                                    VStack(spacing: 10) {
-                                        Image(systemName: "sunset.fill")
-                                            .renderingMode(.original)
-                                            .font(.system(size: 40))
-                                        Text(viewModel.sunTimes.sunset)
-                                            .font(.system(size: 24, weight: .medium, design: .rounded))
-                                            .foregroundColor(.white)
-                                        Text("Sunset")
-                                            .font(.system(size: 16, weight: .light))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    }
-                                }
-                            }
-                            .padding(30)
-                            .frame(maxWidth: .infinity)
-                            .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
-                        }
-                        .buttonStyle(.card)
-
-                        // Moon Phase
-                        Button(action: {}) {
-                            VStack(alignment: .leading, spacing: 20) {
-                                Label("Moon", systemImage: "moon.stars.fill")
-                                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.7))
-
-                                VStack(spacing: 12) {
-                                    Image(systemName: viewModel.moonPhase.icon)
-                                        .font(.system(size: 55))
-                                        .foregroundColor(.white)
-
-                                    Text(viewModel.moonPhase.name)
-                                        .font(.system(size: 24, weight: .medium, design: .rounded))
-                                        .foregroundColor(.white)
-
-                                    Text("\(illuminationPercent(viewModel.moonPhase.phase))% illuminated")
-                                        .font(.system(size: 16, weight: .light))
+                            if viewModel.tideEvents.isEmpty {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("Loading tide data…")
+                                        .font(.system(size: 18, weight: .light, design: .rounded))
                                         .foregroundColor(.white.opacity(0.5))
                                 }
-                            }
-                            .padding(30)
-                            .frame(maxWidth: .infinity)
-                            .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
-                        }
-                        .buttonStyle(.card)
+                                .padding()
+                            } else {
+                                HStack(spacing: 0) {
+                                    ForEach(Array(viewModel.tideEvents.enumerated()), id: \.element.id) { index, tide in
+                                        VStack(spacing: 12) {
+                                            Image(systemName: tide.type == "High" ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                                .foregroundColor(tide.type == "High" ? .cyan : .blue)
+                                                .font(.system(size: 36))
 
-                        // Tides
-                        Button(action: {}) {
-                            VStack(alignment: .leading, spacing: 20) {
-                                Label("Tides", systemImage: "water.waves")
-                                    .font(.system(size: 24, weight: .semibold, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.7))
+                                            Text(tide.type)
+                                                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                                                .foregroundColor(.white)
 
-                                if viewModel.tideEvents.isEmpty {
-                                    VStack(spacing: 8) {
-                                        ProgressView()
-                                        Text("Loading tide data…")
-                                            .font(.system(size: 18, weight: .light, design: .rounded))
-                                            .foregroundColor(.white.opacity(0.5))
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .padding()
-                                } else {
-                                    VStack(spacing: 12) {
-                                        ForEach(viewModel.tideEvents) { tide in
-                                            HStack(spacing: 12) {
-                                                Image(systemName: tide.type == "High" ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                                                    .foregroundColor(tide.type == "High" ? .cyan : .blue)
-                                                    .font(.system(size: 24))
+                                            Text(tide.time)
+                                                .font(.system(size: 24, weight: .medium, design: .rounded))
+                                                .foregroundColor(.white)
 
-                                                Text(tide.type)
-                                                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                                                    .foregroundColor(.white)
-                                                    .frame(width: 50, alignment: .leading)
+                                            Text(tide.height)
+                                                .font(.system(size: 16, weight: .light, design: .rounded))
+                                                .foregroundColor(.white.opacity(0.6))
+                                        }
+                                        .frame(maxWidth: .infinity)
 
-                                                Spacer()
-
-                                                Text(tide.height)
-                                                    .font(.system(size: 18, weight: .light, design: .rounded))
-                                                    .foregroundColor(.white.opacity(0.7))
-
-                                                Text(tide.time)
-                                                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                                                    .foregroundColor(.white)
-                                            }
-
-                                            if tide.id != viewModel.tideEvents.last?.id {
-                                                Divider().background(Color.white.opacity(0.2))
-                                            }
+                                        if index < viewModel.tideEvents.count - 1 {
+                                            Divider()
+                                                .frame(height: 80)
+                                                .background(Color.white.opacity(0.2))
                                         }
                                     }
                                 }
                             }
-                            .padding(30)
-                            .frame(maxWidth: .infinity)
-                            .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
                         }
-                        .buttonStyle(.card)
+                        .padding(.horizontal, 40)
+                        .padding(.vertical, 30)
+                        .frame(maxWidth: 1000)
+                        .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
                     }
-                    .frame(maxWidth: 1100)
+                    .buttonStyle(.card)
 
                     Spacer(minLength: 60)
                 }
@@ -1799,20 +1781,6 @@ struct DiningVenueCard: View {
                         .lineLimit(2)
                 }
 
-                // Status line (e.g., "Offering Dine-In Service")
-                if !venue.statusLine.isEmpty {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(venue.statusLine.lowercased().contains("closed") ? Color.red : Color.green)
-                            .frame(width: 10, height: 10)
-                        Text(venue.statusLine)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    .padding(.top, 4)
-                }
-
                 // Cuisine tags
                 if !venue.cuisines.isEmpty {
                     HStack(spacing: 8) {
@@ -1908,29 +1876,14 @@ struct DiningVenueDetailView: View {
                                 }
                             }
 
-                            // Status and Hours
-                            if !venue.statusLine.isEmpty || !venue.hours.isEmpty {
-                                HStack(spacing: 30) {
-                                    if !venue.statusLine.isEmpty {
-                                        HStack(spacing: 8) {
-                                            Circle()
-                                                .fill(venue.statusLine.lowercased().contains("closed") ? Color.red : Color.green)
-                                                .frame(width: 12, height: 12)
-                                            Text(venue.statusLine)
-                                                .font(.system(size: 22, weight: .medium))
-                                                .foregroundColor(.primary)
-                                        }
-                                    }
-
-                                    if !venue.hours.isEmpty {
-                                        HStack(spacing: 8) {
-                                            Image(systemName: "clock.fill")
-                                                .foregroundColor(.orange)
-                                            Text(venue.hours)
-                                                .font(.system(size: 20, weight: .light))
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
+                            // Hours
+                            if !venue.hours.isEmpty {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "clock.fill")
+                                        .foregroundColor(.orange)
+                                    Text(venue.hours)
+                                        .font(.system(size: 20, weight: .light))
+                                        .foregroundColor(.secondary)
                                 }
                                 .padding(.horizontal, 30)
                                 .padding(.vertical, 15)
@@ -1995,33 +1948,6 @@ struct DiningVenueDetailView: View {
                             }
                             .padding(35)
                             .frame(maxWidth: 600)
-                            .background(RoundedRectangle(cornerRadius: 25).fill(.ultraThinMaterial))
-                        }
-                        .buttonStyle(.card)
-                    }
-
-                    // Chef Section - focusable section
-                    if !venue.chefName.isEmpty {
-                        Button(action: {}) {
-                            VStack(spacing: 20) {
-                                Label("Meet the Chef", systemImage: "person.crop.circle.fill")
-                                    .font(.system(size: 26, weight: .semibold, design: .rounded))
-                                    .foregroundColor(.primary)
-
-                                Text(venue.chefName)
-                                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                                    .foregroundColor(.primary)
-
-                                if !venue.chefBio.isEmpty {
-                                    Text(venue.chefBio)
-                                        .font(.system(size: 22, weight: .light))
-                                        .multilineTextAlignment(.center)
-                                        .foregroundColor(.secondary)
-                                        .frame(maxWidth: 800)
-                                }
-                            }
-                            .padding(35)
-                            .frame(maxWidth: 900)
                             .background(RoundedRectangle(cornerRadius: 25).fill(.ultraThinMaterial))
                         }
                         .buttonStyle(.card)
@@ -2120,36 +2046,6 @@ struct DiningVenueDetailView: View {
                             }
                         }
                         .frame(maxWidth: 1200)
-                    }
-
-                    // Photo Gallery - individual images are focusable
-                    if !venue.gallery.isEmpty && venue.gallery.count > 1 {
-                        VStack(alignment: .leading, spacing: 20) {
-                            Label("Gallery", systemImage: "photo.on.rectangle.angled")
-                                .font(.system(size: 26, weight: .semibold, design: .rounded))
-                                .foregroundColor(.primary)
-                                .padding(.horizontal, 60)
-
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 25) {
-                                    ForEach(venue.gallery, id: \.self) { imageUrl in
-                                        Button(action: {}) {
-                                            AsyncImage(url: URL(string: imageUrl)) { phase in
-                                                if let image = phase.image {
-                                                    image.resizable().aspectRatio(contentMode: .fill)
-                                                } else {
-                                                    Color.gray.opacity(0.2)
-                                                }
-                                            }
-                                            .frame(width: 400, height: 280)
-                                            .clipShape(RoundedRectangle(cornerRadius: 20))
-                                        }
-                                        .buttonStyle(.card)
-                                    }
-                                }
-                                .padding(.horizontal, 60)
-                            }
-                        }
                     }
 
                     Spacer(minLength: 80)
