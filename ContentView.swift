@@ -930,12 +930,8 @@ struct WeatherDetailView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                gradient: Gradient(colors: [Color.blue.opacity(0.3), Color.black, Color.blue.opacity(0.2)]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            Color.white
+                .ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 40) {
@@ -1014,7 +1010,7 @@ struct WeatherDetailView: View {
                         .padding(.horizontal, 50)
                         .padding(.vertical, 35)
                         .frame(maxWidth: 1200)
-                        .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
+                        .background(RoundedRectangle(cornerRadius: 30).fill(Color.black))
                     }
                     .buttonStyle(.card)
 
@@ -1040,6 +1036,7 @@ struct WeatherDetailView: View {
                                             Image(systemName: hour.icon)
                                                 .renderingMode(.original)
                                                 .font(.system(size: 32))
+                                                .frame(width: 44, height: 44)
 
                                             Text("\(hour.temp)°")
                                                 .font(.system(size: 26, weight: .semibold, design: .rounded))
@@ -1049,10 +1046,10 @@ struct WeatherDetailView: View {
                                                 HStack(spacing: 3) {
                                                     Image(systemName: "drop.fill")
                                                         .font(.system(size: 12))
-                                                        .foregroundColor(.cyan)
+                                                        .foregroundColor(.white)
                                                     Text("\(hour.precipChance)%")
                                                         .font(.system(size: 14, weight: .medium, design: .rounded))
-                                                        .foregroundColor(.cyan)
+                                                        .foregroundColor(.white)
                                                 }
                                             } else {
                                                 Spacer().frame(height: 18)
@@ -1065,7 +1062,7 @@ struct WeatherDetailView: View {
                         }
                         .padding(35)
                         .frame(maxWidth: 1000)
-                        .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
+                        .background(RoundedRectangle(cornerRadius: 30).fill(Color.black))
                     }
                     .buttonStyle(.card)
 
@@ -1091,6 +1088,7 @@ struct WeatherDetailView: View {
                                             Image(systemName: day.icon)
                                                 .renderingMode(.original)
                                                 .font(.system(size: 36))
+                                                .frame(width: 50, height: 50)
 
                                             Text("\(day.high)°")
                                                 .font(.system(size: 28, weight: .semibold, design: .rounded))
@@ -1104,10 +1102,10 @@ struct WeatherDetailView: View {
                                                 HStack(spacing: 3) {
                                                     Image(systemName: "drop.fill")
                                                         .font(.system(size: 12))
-                                                        .foregroundColor(.cyan)
+                                                        .foregroundColor(.white)
                                                     Text("\(day.precipChance)%")
                                                         .font(.system(size: 14, weight: .medium, design: .rounded))
-                                                        .foregroundColor(.cyan)
+                                                        .foregroundColor(.white)
                                                 }
                                             } else {
                                                 Spacer().frame(height: 18)
@@ -1120,7 +1118,7 @@ struct WeatherDetailView: View {
                         }
                         .padding(35)
                         .frame(maxWidth: 1100)
-                        .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
+                        .background(RoundedRectangle(cornerRadius: 30).fill(Color.black))
                     }
                     .buttonStyle(.card)
 
@@ -1173,7 +1171,7 @@ struct WeatherDetailView: View {
                         .padding(.horizontal, 40)
                         .padding(.vertical, 30)
                         .frame(maxWidth: 1000)
-                        .background(RoundedRectangle(cornerRadius: 30).fill(.ultraThinMaterial))
+                        .background(RoundedRectangle(cornerRadius: 30).fill(Color.black))
                     }
                     .buttonStyle(.card)
 
