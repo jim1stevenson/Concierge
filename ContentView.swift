@@ -33,6 +33,7 @@ struct RentalDataResponse: Codable {
     let wifiSSID: String
     let wifiPass: String
     let places: [LocalRecommendation]
+    let settleInCards: [SettleInCard]?
     let dining: DiningSection?
 }
 
@@ -99,11 +100,15 @@ struct TideEvent: Identifiable {
     let height: String
 }
 
-struct SettleInCard: Identifiable, Hashable {
+struct SettleInCard: Identifiable, Hashable, Codable {
     let id = UUID()
     let title: String
     let icon: String
     let content: String
+
+    enum CodingKeys: String, CodingKey {
+        case title, icon, content
+    }
 }
 
 struct HowDoICard: Identifiable, Hashable {
@@ -129,6 +134,12 @@ struct GoogleReview: Identifiable, Codable, Hashable {
         case rating, text
         case relativeTime = "relative_time"
     }
+}
+
+struct GooglePlacesCacheEntry: Codable {
+    let rating: Double?
+    let reviewCount: Int?
+    let reviews: [GoogleReview]?
 }
 
 struct DiningVenue: Identifiable, Codable, Hashable {
@@ -182,12 +193,113 @@ class RentalViewModel: ObservableObject {
     @Published var sunTimes: SunTimes = SunTimes(sunrise: "--", sunset: "--")
     @Published var moonPhase: MoonPhase = MoonPhase(phase: 0, name: "—", icon: "moon.fill")
     @Published var tideEvents: [TideEvent] = []
-    
+
     @Published var settleInCards: [SettleInCard] = []
-    
+
     private let lat = 32.6082
     private let lon = -80.0848
     private let noaaStation = "8667062"
+
+    // MARK: - Cache Configuration
+    private enum CacheKeys {
+        static let rentalData = "cachedRentalData"
+        static let rentalDataTimestamp = "cachedRentalDataTimestamp"
+        static let heroImageData = "cachedHeroImageData"
+        static let googlePlacesData = "cachedGooglePlacesData"
+        static let googlePlacesTimestamp = "cachedGooglePlacesTimestamp"
+    }
+    private let cacheTTL: TimeInterval = 3600 // 1 hour for rental data
+    private let googleCacheTTL: TimeInterval = 86400 // 24 hours for Google Places
+
+    // MARK: - Cache Helpers
+    private func getCachedRentalData() -> (data: RentalDataResponse, image: UIImage?)? {
+        guard let timestamp = UserDefaults.standard.object(forKey: CacheKeys.rentalDataTimestamp) as? Date,
+              Date().timeIntervalSince(timestamp) < cacheTTL,
+              let data = UserDefaults.standard.data(forKey: CacheKeys.rentalData),
+              let decoded = try? JSONDecoder().decode(RentalDataResponse.self, from: data) else {
+            return nil
+        }
+
+        var heroImage: UIImage? = nil
+        if let imageData = UserDefaults.standard.data(forKey: CacheKeys.heroImageData) {
+            heroImage = UIImage(data: imageData)
+        }
+
+        return (decoded, heroImage)
+    }
+
+    private func cacheRentalData(_ response: RentalDataResponse, imageData: Data?) {
+        if let encoded = try? JSONEncoder().encode(response) {
+            UserDefaults.standard.set(encoded, forKey: CacheKeys.rentalData)
+            UserDefaults.standard.set(Date(), forKey: CacheKeys.rentalDataTimestamp)
+        }
+        if let imageData = imageData {
+            UserDefaults.standard.set(imageData, forKey: CacheKeys.heroImageData)
+        }
+    }
+
+    // MARK: - Google Places Cache
+    private func isGoogleCacheValid() -> Bool {
+        guard let timestamp = UserDefaults.standard.object(forKey: CacheKeys.googlePlacesTimestamp) as? Date else {
+            return false
+        }
+        return Date().timeIntervalSince(timestamp) < googleCacheTTL
+    }
+
+    private func getCachedGoogleData() -> [String: GooglePlacesCacheEntry]? {
+        guard isGoogleCacheValid(),
+              let data = UserDefaults.standard.data(forKey: CacheKeys.googlePlacesData),
+              let decoded = try? JSONDecoder().decode([String: GooglePlacesCacheEntry].self, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+
+    private func cacheGoogleData(from venues: [DiningVenue]) {
+        var cache: [String: GooglePlacesCacheEntry] = [:]
+        for venue in venues {
+            if venue.googleRating != nil || venue.googleReviews != nil {
+                cache[venue.id] = GooglePlacesCacheEntry(
+                    rating: venue.googleRating,
+                    reviewCount: venue.googleReviewCount,
+                    reviews: venue.googleReviews
+                )
+            }
+        }
+        if !cache.isEmpty {
+            if let encoded = try? JSONEncoder().encode(cache) {
+                UserDefaults.standard.set(encoded, forKey: CacheKeys.googlePlacesData)
+                UserDefaults.standard.set(Date(), forKey: CacheKeys.googlePlacesTimestamp)
+                print("💾 Cached Google Places data for \(cache.count) venues")
+            }
+        }
+    }
+
+    private func mergeGoogleDataIntoVenues(_ venues: [DiningVenue], from cache: [String: GooglePlacesCacheEntry]) -> [DiningVenue] {
+        return venues.map { venue in
+            if let cached = cache[venue.id] {
+                return DiningVenue(
+                    id: venue.id,
+                    name: venue.name,
+                    location: venue.location,
+                    cuisines: venue.cuisines,
+                    price: venue.price,
+                    mealTimes: venue.mealTimes,
+                    shortDescription: venue.shortDescription,
+                    heroImage: venue.heroImage,
+                    logoImage: venue.logoImage,
+                    hours: venue.hours,
+                    reservationRequired: venue.reservationRequired,
+                    reservationPhone: venue.reservationPhone,
+                    attire: venue.attire,
+                    googleRating: cached.rating,
+                    googleReviewCount: cached.reviewCount,
+                    googleReviews: cached.reviews
+                )
+            }
+            return venue
+        }
+    }
     
     // MARK: - Fetch All Data
     func fetchAllData() async {
@@ -200,59 +312,96 @@ class RentalViewModel: ObservableObject {
     
     // MARK: - Rental Data from n8n
     func fetchRentalData() async {
-        guard let url = URL(string: "https://n8n.srv1321920.hstgr.cloud/webhook/kiawah-data") else { return }
-        
+        // Check rental data cache first
+        if let cached = getCachedRentalData() {
+            print("📦 Using cached rental data")
+            await applyRentalData(cached.data, heroImage: cached.image)
+            return
+        }
+
+        // Cache miss or stale - fetch from network
+        // Check if we have valid Google cache to skip API calls
+        let googleCache = getCachedGoogleData()
+        let skipGoogle = googleCache != nil
+
+        let urlString = skipGoogle
+            ? "https://n8n.srv1321920.hstgr.cloud/webhook/kiawah-data?skipGoogle=true"
+            : "https://n8n.srv1321920.hstgr.cloud/webhook/kiawah-data"
+
+        print(skipGoogle ? "🌐 Fetching rental data (skipping Google API)" : "🌐 Fetching rental data with Google enrichment")
+        guard let url = URL(string: urlString) else { return }
+
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let decoder = JSONDecoder()
-            let decoded = try decoder.decode(RentalDataResponse.self, from: data)
-            
+            var decoded = try decoder.decode(RentalDataResponse.self, from: data)
+
             var downloadedImage: UIImage? = nil
+            var downloadedImageData: Data? = nil
             if let imageURL = URL(string: decoded.heroImage) {
                 let (imageData, _) = try await URLSession.shared.data(from: imageURL)
                 downloadedImage = UIImage(data: imageData)
+                downloadedImageData = imageData
             }
-            
-            let grouped = Dictionary(grouping: decoded.places, by: { $0.type ?? "Other" })
-            let categoryOrder = ["Dining", "Activities", "Golf", "Shopping", "Medical"]
-            
-            let sortedCategories = categoryOrder.compactMap { catName -> PlaceCategory? in
-                let match = grouped.first(where: { $0.key.lowercased() == catName.lowercased() })
-                guard let places = match?.value, !places.isEmpty else { return nil }
-                return PlaceCategory(name: catName, icon: PlaceCategory.iconFor(catName), places: places)
+
+            // Handle Google Places data
+            if skipGoogle, let cache = googleCache, let dining = decoded.dining {
+                // Merge cached Google data into venues
+                print("🔀 Merging cached Google Places data")
+                let mergedVenues = mergeGoogleDataIntoVenues(dining.venues, from: cache)
+                decoded = RentalDataResponse(
+                    guestName: decoded.guestName,
+                    heroImage: decoded.heroImage,
+                    wifiSSID: decoded.wifiSSID,
+                    wifiPass: decoded.wifiPass,
+                    places: decoded.places,
+                    settleInCards: decoded.settleInCards,
+                    dining: DiningSection(
+                        title: dining.title,
+                        intro: dining.intro,
+                        heroImage: dining.heroImage,
+                        venues: mergedVenues
+                    )
+                )
+            } else if let dining = decoded.dining {
+                // Fresh Google data - cache it
+                cacheGoogleData(from: dining.venues)
             }
-            
-            let knownNames = Set(categoryOrder.map { $0.lowercased() })
-            let extraCategories = grouped
-                .filter { !knownNames.contains($0.key.lowercased()) }
-                .map { PlaceCategory(name: $0.key, icon: PlaceCategory.iconFor($0.key), places: $0.value) }
-            
-            let cards = [
-                SettleInCard(title: "Check Out Instructions", icon: "door.right.hand.open",
-                             content: "Check out by 10 AM. Please strip all beds and start the dishwasher. Take trash to the bins at the end of the driveway. Leave keys on the kitchen counter."),
-                SettleInCard(title: "Emergency Info", icon: "phone.fill",
-                             content: "Property Manager: (843) 555-1234\nAfter Hours Emergency: (843) 555-5678\nKiawah Island Security: (843) 768-5566\nAlarm Code: 1234"),
-                SettleInCard(title: "Parking & Gate Code", icon: "car.fill",
-                             content: "Main Gate Code: #4521\nPark in the driveway only — max 2 vehicles.\nGuest passes available at the gate house for visitors."),
-                SettleInCard(title: "Trash & Recycling", icon: "trash.fill",
-                             content: "Trash pickup is Tuesday morning. Bins are in the garage — roll them to the curb by 7 AM Monday night.\nBlue bin: recycling. Green bin: trash.\nNo glass in recycling."),
-                SettleInCard(title: "Pool & Hot Tub", icon: "figure.pool.swim",
-                             content: "Pool hours: 8 AM – 10 PM\nHot tub: replace cover after each use.\nHeater controls are on the back wall panel near the outdoor shower.\nNo glass near the pool area.")
-            ]
-            
-            await MainActor.run { [downloadedImage] in
-                self.guestName = decoded.guestName
-                self.heroImageURL = decoded.heroImage
-                self.heroImage = downloadedImage
-                self.wifiSSID = decoded.wifiSSID
-                self.wifiPass = decoded.wifiPass
-                self.recommendations = decoded.places
-                self.categories = sortedCategories + extraCategories
-                self.settleInCards = cards
-                self.diningSection = decoded.dining
-            }
+
+            // Cache the rental data
+            cacheRentalData(decoded, imageData: downloadedImageData)
+
+            await applyRentalData(decoded, heroImage: downloadedImage)
         } catch {
             print("❌ Decode Error: \(error)")
+        }
+    }
+
+    private func applyRentalData(_ decoded: RentalDataResponse, heroImage: UIImage?) async {
+        let grouped = Dictionary(grouping: decoded.places, by: { $0.type ?? "Other" })
+        let categoryOrder = ["Dining", "Activities", "Golf", "Shopping", "Medical"]
+
+        let sortedCategories = categoryOrder.compactMap { catName -> PlaceCategory? in
+            let match = grouped.first(where: { $0.key.lowercased() == catName.lowercased() })
+            guard let places = match?.value, !places.isEmpty else { return nil }
+            return PlaceCategory(name: catName, icon: PlaceCategory.iconFor(catName), places: places)
+        }
+
+        let knownNames = Set(categoryOrder.map { $0.lowercased() })
+        let extraCategories = grouped
+            .filter { !knownNames.contains($0.key.lowercased()) }
+            .map { PlaceCategory(name: $0.key, icon: PlaceCategory.iconFor($0.key), places: $0.value) }
+
+        await MainActor.run { [heroImage] in
+            self.guestName = decoded.guestName
+            self.heroImageURL = decoded.heroImage
+            self.heroImage = heroImage
+            self.wifiSSID = decoded.wifiSSID
+            self.wifiPass = decoded.wifiPass
+            self.recommendations = decoded.places
+            self.categories = sortedCategories + extraCategories
+            self.settleInCards = decoded.settleInCards ?? []
+            self.diningSection = decoded.dining
         }
     }
     
