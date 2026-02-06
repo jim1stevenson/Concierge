@@ -48,6 +48,20 @@ The app follows MVVM but is currently monolithic - all code lives in `Concierge/
 - NOAA Tides & Currents API
 - QR Server API for WiFi QR codes
 
+## n8n Workflow API Access
+
+Claude Code can view and update n8n workflows using the API:
+
+- **Base URL:** `https://n8n.srv1321920.hstgr.cloud/api/v1`
+- **API Key:** `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlNWY2NmNhMC1jNWFmLTRiYjItODA1Ni1mNWU2ODU5Yjc3ZWQiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzcwMzc4Nzg0LCJleHAiOjE3NzI5MjQ0MDB9._Cjs604AmRWlpfJaO4DNAswvS02BVfouL1wK1R0CWEE`
+- **Active Workflow ID:** `kOFnHIgALKRsK5Z-eSvtL` (Concierge Apple TV)
+
+Example usage:
+```bash
+curl -X GET "https://n8n.srv1321920.hstgr.cloud/api/v1/workflows" \
+  -H "X-N8N-API-KEY: <api_key>"
+```
+
 ## tvOS Considerations
 
 - Design for TV remote navigation with large touch targets
