@@ -851,7 +851,7 @@ class HomeKitManager: NSObject, ObservableObject {
 
     func lockDoor(_ accessory: HMAccessory, lock: Bool) {
         guard let lockService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLockMechanism }) else { return }
-        guard let lockChar = lockService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeLockTargetState }) else { return }
+        guard let lockChar = lockService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeTargetLockMechanismState }) else { return }
 
         let targetState = lock ? HMCharacteristicValueLockMechanismState.secured : HMCharacteristicValueLockMechanismState.unsecured
         lockChar.writeValue(targetState.rawValue) { error in
@@ -913,7 +913,7 @@ class HomeKitManager: NSObject, ObservableObject {
 
     func getLockState(_ accessory: HMAccessory) -> Bool {
         guard let lockService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLockMechanism }),
-              let lockChar = lockService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeLockCurrentState }),
+              let lockChar = lockService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeCurrentLockMechanismState }),
               let value = lockChar.value as? Int else { return false }
         return value == HMCharacteristicValueLockMechanismState.secured.rawValue
     }
@@ -1598,21 +1598,34 @@ struct AccessoryCard: View {
                         .foregroundColor(.white.opacity(0.4))
                 }
 
-                // Brightness slider for lights
+                // Brightness controls for lights (tvOS-compatible)
                 if accessoryType == "Light" && isOn {
-                    VStack(spacing: 8) {
-                        Slider(value: $brightness, in: 0...100, step: 10) { editing in
-                            if !editing {
-                                homeKit.setLightBrightness(accessory, brightness: Int(brightness))
-                            }
+                    HStack(spacing: 20) {
+                        Button(action: {
+                            brightness = max(0, brightness - 25)
+                            homeKit.setLightBrightness(accessory, brightness: Int(brightness))
+                        }) {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(.white.opacity(0.7))
                         }
-                        .tint(.yellow)
+                        .buttonStyle(.card)
 
                         Text("\(Int(brightness))%")
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.5))
+                            .font(.system(size: 20, weight: .medium, design: .rounded))
+                            .foregroundColor(.yellow)
+                            .frame(width: 60)
+
+                        Button(action: {
+                            brightness = min(100, brightness + 25)
+                            homeKit.setLightBrightness(accessory, brightness: Int(brightness))
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        .buttonStyle(.card)
                     }
-                    .padding(.horizontal, 10)
                 }
             }
             .frame(maxWidth: .infinity)
