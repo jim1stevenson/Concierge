@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import HomeKit
 
 @main
 struct KiawahRentalApp: App {
@@ -193,12 +194,13 @@ class RentalViewModel: ObservableObject {
     @Published var sunTimes: SunTimes = SunTimes(sunrise: "--", sunset: "--")
     @Published var moonPhase: MoonPhase = MoonPhase(phase: 0, name: "—", icon: "moon.fill")
     @Published var tideEvents: [TideEvent] = []
+    @Published var tidesFetched: Bool = false
 
     @Published var settleInCards: [SettleInCard] = []
 
-    private let lat = 32.6082
-    private let lon = -80.0848
-    private let noaaStation = "8667062"
+    private let lat = 35.2271
+    private let lon = -80.8431
+    private let noaaStation = "4460243"
 
     // MARK: - Cache Configuration
     private enum CacheKeys {
@@ -558,6 +560,7 @@ class RentalViewModel: ObservableObject {
         let urlString = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=\(today)&end_date=\(today)&station=\(noaaStation)&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&format=json&application=KiawahConcierge"
         guard let url = URL(string: urlString) else {
             print("❌ Tide Error: Bad URL")
+            await MainActor.run { self.tidesFetched = true }
             return
         }
         
@@ -576,6 +579,7 @@ class RentalViewModel: ObservableObject {
             
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 print("❌ Tide Error: Could not parse JSON")
+                await MainActor.run { self.tidesFetched = true }
                 return
             }
             
@@ -585,6 +589,7 @@ class RentalViewModel: ObservableObject {
                     print("❌ NOAA Error: \(message)")
                 }
                 print("❌ Tide Error: No predictions key in response. Keys: \(json.keys)")
+                await MainActor.run { self.tidesFetched = true }
                 return
             }
             
@@ -617,9 +622,11 @@ class RentalViewModel: ObservableObject {
             
             await MainActor.run { [events] in
                 self.tideEvents = events
+                self.tidesFetched = true
             }
         } catch {
             print("❌ Tide Error: \(error)")
+            await MainActor.run { self.tidesFetched = true }
         }
     }
     
@@ -763,6 +770,203 @@ class RentalViewModel: ObservableObject {
 }
 
 // =============================================================
+// MARK: - HOMEKIT MANAGER
+// =============================================================
+
+class HomeKitManager: NSObject, ObservableObject {
+    @Published var homes: [HMHome] = []
+    @Published var primaryHome: HMHome?
+    @Published var accessories: [HMAccessory] = []
+    @Published var rooms: [HMRoom] = []
+    @Published var isAuthorized: Bool = false
+    @Published var authorizationError: String?
+
+    private var homeManager: HMHomeManager?
+
+    override init() {
+        super.init()
+        setupHomeManager()
+    }
+
+    private func setupHomeManager() {
+        homeManager = HMHomeManager()
+        homeManager?.delegate = self
+    }
+
+    func refreshData() {
+        guard let home = primaryHome else { return }
+        accessories = home.accessories
+        rooms = home.rooms
+    }
+
+    // MARK: - Accessory Control
+
+    func toggleLight(_ accessory: HMAccessory) {
+        guard let lightService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLightbulb }) else { return }
+        guard let powerChar = lightService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypePowerState }) else { return }
+
+        if let currentValue = powerChar.value as? Bool {
+            powerChar.writeValue(!currentValue) { error in
+                if let error = error {
+                    print("❌ HomeKit Error: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func setLightBrightness(_ accessory: HMAccessory, brightness: Int) {
+        guard let lightService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLightbulb }) else { return }
+        guard let brightnessChar = lightService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeBrightness }) else { return }
+
+        brightnessChar.writeValue(brightness) { error in
+            if let error = error {
+                print("❌ HomeKit Brightness Error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func setThermostat(_ accessory: HMAccessory, temperature: Double) {
+        guard let thermostatService = accessory.services.first(where: { $0.serviceType == HMServiceTypeThermostat }) else { return }
+        guard let tempChar = thermostatService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeTargetTemperature }) else { return }
+
+        tempChar.writeValue(temperature) { error in
+            if let error = error {
+                print("❌ HomeKit Thermostat Error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func toggleSwitch(_ accessory: HMAccessory) {
+        guard let switchService = accessory.services.first(where: { $0.serviceType == HMServiceTypeSwitch || $0.serviceType == HMServiceTypeOutlet }) else { return }
+        guard let powerChar = switchService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypePowerState }) else { return }
+
+        if let currentValue = powerChar.value as? Bool {
+            powerChar.writeValue(!currentValue) { error in
+                if let error = error {
+                    print("❌ HomeKit Switch Error: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func lockDoor(_ accessory: HMAccessory, lock: Bool) {
+        guard let lockService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLockMechanism }) else { return }
+        guard let lockChar = lockService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeLockTargetState }) else { return }
+
+        let targetState = lock ? HMCharacteristicValueLockMechanismState.secured : HMCharacteristicValueLockMechanismState.unsecured
+        lockChar.writeValue(targetState.rawValue) { error in
+            if let error = error {
+                print("❌ HomeKit Lock Error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Helper Methods
+
+    func accessoryIcon(for accessory: HMAccessory) -> String {
+        let serviceTypes = accessory.services.map { $0.serviceType }
+
+        if serviceTypes.contains(HMServiceTypeLightbulb) { return "lightbulb.fill" }
+        if serviceTypes.contains(HMServiceTypeThermostat) { return "thermometer" }
+        if serviceTypes.contains(HMServiceTypeLockMechanism) { return "lock.fill" }
+        if serviceTypes.contains(HMServiceTypeGarageDoorOpener) { return "door.garage.closed" }
+        if serviceTypes.contains(HMServiceTypeSwitch) { return "switch.2" }
+        if serviceTypes.contains(HMServiceTypeOutlet) { return "poweroutlet.fill" }
+        if serviceTypes.contains(HMServiceTypeFan) { return "fan.fill" }
+        if serviceTypes.contains(HMServiceTypeWindowCovering) { return "blinds.horizontal.closed" }
+        if serviceTypes.contains(HMServiceTypeDoor) { return "door.left.hand.closed" }
+        if serviceTypes.contains(HMServiceTypeWindow) { return "window.horizontal" }
+        if serviceTypes.contains(HMServiceTypeSecuritySystem) { return "shield.fill" }
+        if serviceTypes.contains(HMServiceTypeSpeaker) { return "speaker.fill" }
+
+        return "house.fill"
+    }
+
+    func accessoryType(for accessory: HMAccessory) -> String {
+        let serviceTypes = accessory.services.map { $0.serviceType }
+
+        if serviceTypes.contains(HMServiceTypeLightbulb) { return "Light" }
+        if serviceTypes.contains(HMServiceTypeThermostat) { return "Thermostat" }
+        if serviceTypes.contains(HMServiceTypeLockMechanism) { return "Lock" }
+        if serviceTypes.contains(HMServiceTypeGarageDoorOpener) { return "Garage Door" }
+        if serviceTypes.contains(HMServiceTypeSwitch) { return "Switch" }
+        if serviceTypes.contains(HMServiceTypeOutlet) { return "Outlet" }
+        if serviceTypes.contains(HMServiceTypeFan) { return "Fan" }
+        if serviceTypes.contains(HMServiceTypeWindowCovering) { return "Window Covering" }
+        if serviceTypes.contains(HMServiceTypeDoor) { return "Door" }
+        if serviceTypes.contains(HMServiceTypeWindow) { return "Window" }
+        if serviceTypes.contains(HMServiceTypeSecuritySystem) { return "Security System" }
+        if serviceTypes.contains(HMServiceTypeSpeaker) { return "Speaker" }
+
+        return "Accessory"
+    }
+
+    func isAccessoryOn(_ accessory: HMAccessory) -> Bool {
+        for service in accessory.services {
+            if let powerChar = service.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypePowerState }),
+               let value = powerChar.value as? Bool {
+                return value
+            }
+        }
+        return false
+    }
+
+    func getLockState(_ accessory: HMAccessory) -> Bool {
+        guard let lockService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLockMechanism }),
+              let lockChar = lockService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeLockCurrentState }),
+              let value = lockChar.value as? Int else { return false }
+        return value == HMCharacteristicValueLockMechanismState.secured.rawValue
+    }
+
+    func getCurrentTemperature(_ accessory: HMAccessory) -> Double? {
+        guard let thermostatService = accessory.services.first(where: { $0.serviceType == HMServiceTypeThermostat }),
+              let tempChar = thermostatService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeCurrentTemperature }),
+              let value = tempChar.value as? Double else { return nil }
+        return value
+    }
+
+    func getTargetTemperature(_ accessory: HMAccessory) -> Double? {
+        guard let thermostatService = accessory.services.first(where: { $0.serviceType == HMServiceTypeThermostat }),
+              let tempChar = thermostatService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeTargetTemperature }),
+              let value = tempChar.value as? Double else { return nil }
+        return value
+    }
+
+    func getBrightness(_ accessory: HMAccessory) -> Int? {
+        guard let lightService = accessory.services.first(where: { $0.serviceType == HMServiceTypeLightbulb }),
+              let brightnessChar = lightService.characteristics.first(where: { $0.characteristicType == HMCharacteristicTypeBrightness }),
+              let value = brightnessChar.value as? Int else { return nil }
+        return value
+    }
+}
+
+extension HomeKitManager: HMHomeManagerDelegate {
+    func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+        DispatchQueue.main.async {
+            self.homes = manager.homes
+            self.primaryHome = manager.homes.first
+            self.isAuthorized = true
+            self.refreshData()
+        }
+    }
+
+    func homeManager(_ manager: HMHomeManager, didUpdate status: HMHomeManagerAuthorizationStatus) {
+        DispatchQueue.main.async {
+            if status.contains(.authorized) {
+                self.isAuthorized = true
+                self.authorizationError = nil
+            } else if status.contains(.restricted) {
+                self.isAuthorized = false
+                self.authorizationError = "HomeKit access is restricted on this device."
+            } else {
+                self.isAuthorized = false
+                self.authorizationError = "HomeKit access not authorized. Please enable in Settings."
+            }
+        }
+    }
+}
+
+// =============================================================
 // MARK: - 3. MAIN HOME SCREEN
 // =============================================================
 
@@ -829,6 +1033,12 @@ struct KiawahConciergeView: View {
 
                         NavigationLink(destination: CategoryBrowserView(categories: viewModel.categories, diningSection: viewModel.diningSection)) {
                             DockButton(icon: "mappin.and.ellipse", label: "Explore")
+                        }
+                        .buttonStyle(.card)
+                        .tint(.gray)
+
+                        NavigationLink(destination: HomeControlsView()) {
+                            DockButton(icon: "homekit", label: "Home")
                         }
                         .buttonStyle(.card)
                         .tint(.gray)
@@ -1122,22 +1332,14 @@ struct WeatherDetailView: View {
                     }
                     .buttonStyle(.card)
 
-                    // Tides - Centered, Horizontal Layout
-                    Button(action: {}) {
-                        VStack(spacing: 20) {
-                            Label("Today's Tides", systemImage: "water.waves")
-                                .font(.system(size: 28, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.7))
+                    // Tides - Centered, Horizontal Layout (only shown if tide data is available)
+                    if !viewModel.tideEvents.isEmpty {
+                        Button(action: {}) {
+                            VStack(spacing: 20) {
+                                Label("Today's Tides", systemImage: "water.waves")
+                                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.7))
 
-                            if viewModel.tideEvents.isEmpty {
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                    Text("Loading tide data…")
-                                        .font(.system(size: 18, weight: .light, design: .rounded))
-                                        .foregroundColor(.white.opacity(0.5))
-                                }
-                                .padding()
-                            } else {
                                 HStack(spacing: 0) {
                                     ForEach(Array(viewModel.tideEvents.enumerated()), id: \.element.id) { index, tide in
                                         VStack(spacing: 12) {
@@ -1167,13 +1369,13 @@ struct WeatherDetailView: View {
                                     }
                                 }
                             }
+                            .padding(.horizontal, 40)
+                            .padding(.vertical, 30)
+                            .frame(maxWidth: 1000)
+                            .background(RoundedRectangle(cornerRadius: 30).fill(Color.black))
                         }
-                        .padding(.horizontal, 40)
-                        .padding(.vertical, 30)
-                        .frame(maxWidth: 1000)
-                        .background(RoundedRectangle(cornerRadius: 30).fill(Color.black))
+                        .buttonStyle(.card)
                     }
-                    .buttonStyle(.card)
 
                     Spacer(minLength: 60)
                 }
@@ -1208,6 +1410,279 @@ struct WeatherDetailView: View {
         // Use cosine function to calculate illumination
         let illumination = (1 - cos(phase * 2 * .pi)) / 2
         return Int((illumination * 100).rounded())
+    }
+}
+
+// =============================================================
+// MARK: - HOME CONTROLS VIEW
+// =============================================================
+
+struct HomeControlsView: View {
+    @StateObject private var homeKit = HomeKitManager()
+    @State private var selectedRoom: HMRoom?
+
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [Color.black, Color.indigo.opacity(0.2), Color.black]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            if !homeKit.isAuthorized {
+                // Authorization needed or error state
+                VStack(spacing: 30) {
+                    Image(systemName: "house.circle")
+                        .font(.system(size: 100))
+                        .foregroundColor(.white.opacity(0.6))
+
+                    Text("HomeKit Access Required")
+                        .font(.system(size: 36, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+
+                    if let error = homeKit.authorizationError {
+                        Text(error)
+                            .font(.system(size: 22, weight: .light, design: .rounded))
+                            .foregroundColor(.white.opacity(0.7))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 100)
+                    } else {
+                        Text("Waiting for HomeKit authorization...")
+                            .font(.system(size: 22, weight: .light, design: .rounded))
+                            .foregroundColor(.white.opacity(0.7))
+                        ProgressView()
+                            .scaleEffect(1.5)
+                    }
+                }
+            } else if homeKit.accessories.isEmpty {
+                // No accessories found
+                VStack(spacing: 30) {
+                    Image(systemName: "house")
+                        .font(.system(size: 100))
+                        .foregroundColor(.white.opacity(0.6))
+
+                    Text("No Accessories Found")
+                        .font(.system(size: 36, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text("No HomeKit accessories are configured for this home.")
+                        .font(.system(size: 22, weight: .light, design: .rounded))
+                        .foregroundColor(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 100)
+                }
+            } else {
+                // Main content
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 40) {
+                        // Home name header
+                        if let home = homeKit.primaryHome {
+                            HStack {
+                                Image(systemName: "house.fill")
+                                    .font(.system(size: 32))
+                                    .foregroundColor(.white.opacity(0.7))
+                                Text(home.name)
+                                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                            .padding(.horizontal, 60)
+                            .padding(.top, 40)
+                        }
+
+                        // Room filter
+                        if !homeKit.rooms.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 15) {
+                                    RoomFilterButton(title: "All Rooms", isSelected: selectedRoom == nil) {
+                                        selectedRoom = nil
+                                    }
+
+                                    ForEach(homeKit.rooms, id: \.uniqueIdentifier) { room in
+                                        RoomFilterButton(title: room.name, isSelected: selectedRoom?.uniqueIdentifier == room.uniqueIdentifier) {
+                                            selectedRoom = room
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 60)
+                            }
+                        }
+
+                        // Accessories grid
+                        let filteredAccessories = selectedRoom == nil
+                            ? homeKit.accessories
+                            : homeKit.accessories.filter { $0.room?.uniqueIdentifier == selectedRoom?.uniqueIdentifier }
+
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 25),
+                            GridItem(.flexible(), spacing: 25),
+                            GridItem(.flexible(), spacing: 25)
+                        ], spacing: 25) {
+                            ForEach(filteredAccessories, id: \.uniqueIdentifier) { accessory in
+                                AccessoryCard(accessory: accessory, homeKit: homeKit)
+                            }
+                        }
+                        .padding(.horizontal, 60)
+                        .padding(.bottom, 60)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Home Controls")
+    }
+}
+
+struct RoomFilterButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 22, weight: isSelected ? .semibold : .regular, design: .rounded))
+                .foregroundColor(isSelected ? .white : .white.opacity(0.7))
+                .padding(.horizontal, 25)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(isSelected ? Color.blue.opacity(0.4) : Color.white.opacity(0.1))
+                )
+        }
+        .buttonStyle(.card)
+    }
+}
+
+struct AccessoryCard: View {
+    let accessory: HMAccessory
+    @ObservedObject var homeKit: HomeKitManager
+    @State private var isOn: Bool = false
+    @State private var brightness: Double = 100
+    @State private var isLocked: Bool = true
+
+    var body: some View {
+        let accessoryType = homeKit.accessoryType(for: accessory)
+
+        Button(action: {
+            handleTap()
+        }) {
+            VStack(spacing: 20) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(isOn ? Color.yellow.opacity(0.3) : Color.white.opacity(0.1))
+                        .frame(width: 80, height: 80)
+
+                    Image(systemName: homeKit.accessoryIcon(for: accessory))
+                        .font(.system(size: 36))
+                        .foregroundColor(isOn ? .yellow : .white.opacity(0.7))
+                }
+
+                // Name
+                Text(accessory.name)
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+
+                // Type / Status
+                Text(statusText)
+                    .font(.system(size: 18, weight: .light, design: .rounded))
+                    .foregroundColor(.white.opacity(0.6))
+
+                // Room
+                if let room = accessory.room {
+                    Text(room.name)
+                        .font(.system(size: 16, weight: .light, design: .rounded))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+
+                // Brightness slider for lights
+                if accessoryType == "Light" && isOn {
+                    VStack(spacing: 8) {
+                        Slider(value: $brightness, in: 0...100, step: 10) { editing in
+                            if !editing {
+                                homeKit.setLightBrightness(accessory, brightness: Int(brightness))
+                            }
+                        }
+                        .tint(.yellow)
+
+                        Text("\(Int(brightness))%")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                    .padding(.horizontal, 10)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(30)
+            .background(
+                RoundedRectangle(cornerRadius: 25)
+                    .fill(Color.black.opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 25)
+                            .stroke(isOn ? Color.yellow.opacity(0.3) : Color.white.opacity(0.1), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.card)
+        .onAppear {
+            refreshState()
+        }
+    }
+
+    private var statusText: String {
+        let type = homeKit.accessoryType(for: accessory)
+        switch type {
+        case "Light":
+            return isOn ? "On" : "Off"
+        case "Lock":
+            return isLocked ? "Locked" : "Unlocked"
+        case "Thermostat":
+            if let temp = homeKit.getCurrentTemperature(accessory) {
+                return String(format: "%.1f°C", temp)
+            }
+            return "Thermostat"
+        case "Switch", "Outlet", "Fan":
+            return isOn ? "On" : "Off"
+        default:
+            return type
+        }
+    }
+
+    private func refreshState() {
+        let type = homeKit.accessoryType(for: accessory)
+        switch type {
+        case "Light", "Switch", "Outlet", "Fan":
+            isOn = homeKit.isAccessoryOn(accessory)
+            if let b = homeKit.getBrightness(accessory) {
+                brightness = Double(b)
+            }
+        case "Lock":
+            isLocked = homeKit.getLockState(accessory)
+            isOn = isLocked
+        default:
+            break
+        }
+    }
+
+    private func handleTap() {
+        let type = homeKit.accessoryType(for: accessory)
+        switch type {
+        case "Light":
+            homeKit.toggleLight(accessory)
+            isOn.toggle()
+        case "Switch", "Outlet":
+            homeKit.toggleSwitch(accessory)
+            isOn.toggle()
+        case "Lock":
+            homeKit.lockDoor(accessory, lock: !isLocked)
+            isLocked.toggle()
+            isOn = isLocked
+        default:
+            break
+        }
     }
 }
 
@@ -1544,7 +2019,7 @@ struct CategoryBrowserView: View {
             )
             .ignoresSafeArea()
         )
-        .navigationTitle("Explore Kiawah")
+        .navigationTitle("Explore Mint Hill")
     }
 }
 

@@ -1,6 +1,7 @@
 {
   "images" : [
     {
+      "filename" : "icon_background.png",
       "idiom" : "tv"
     }
   ],
