@@ -585,7 +585,7 @@ class RentalViewModel: ObservableObject {
     // MARK: - NOAA Tides
     func fetchTides() async {
         // Skip tides if no NOAA station configured for this location
-        guard let station = noaaStation else {
+        guard let station = noaaStation, !station.isEmpty else {
             print("🌊 No NOAA station configured - skipping tides")
             await MainActor.run { self.tidesFetched = true }
             return
