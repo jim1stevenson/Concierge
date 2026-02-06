@@ -2309,12 +2309,12 @@ struct PropertySettingsView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.95).ignoresSafeArea()
+            Color.white.ignoresSafeArea()
 
             VStack(spacing: 40) {
                 Text("Property Settings")
                     .font(.system(size: 50, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.black)
 
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Current Property ID")
@@ -2323,10 +2323,10 @@ struct PropertySettingsView: View {
 
                     Text(viewModel.propertyId)
                         .font(.system(size: 36, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(.black)
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white.opacity(0.1))
+                        .background(Color.black.opacity(0.1))
                         .cornerRadius(12)
                 }
                 .padding(.horizontal, 60)
@@ -2340,9 +2340,9 @@ struct PropertySettingsView: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 28))
                         .padding()
-                        .background(Color.white.opacity(0.15))
+                        .background(Color.black.opacity(0.1))
                         .cornerRadius(12)
-                        .foregroundColor(.white)
+                        .foregroundColor(.black)
                 }
                 .padding(.horizontal, 60)
 
@@ -2368,7 +2368,7 @@ struct PropertySettingsView: View {
 
                 Text("The Property ID must match a Property_ID in your VillaData sheet.")
                     .font(.caption)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.secondary)
                     .padding(.bottom, 40)
             }
             .padding(.top, 60)
