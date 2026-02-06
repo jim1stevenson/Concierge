@@ -53,7 +53,7 @@ The app follows MVVM but is currently monolithic - all code lives in `Concierge/
 Claude Code can view and update n8n workflows using the API:
 
 - **Base URL:** `https://n8n.srv1321920.hstgr.cloud/api/v1`
-- **API Key:** `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlNWY2NmNhMC1jNWFmLTRiYjItODA1Ni1mNWU2ODU5Yjc3ZWQiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzcwMzc4Nzg0LCJleHAiOjE3NzI5MjQ0MDB9._Cjs604AmRWlpfJaO4DNAswvS02BVfouL1wK1R0CWEE`
+- **API Key:** `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlNWY2NmNhMC1jNWFmLTRiYjItODA1Ni1mNWU2ODU5Yjc3ZWQiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzcwNDA1NDMxLCJleHAiOjE3NzgxMDQ4MDB9.8jDTCIhye2dobGDKJ4a8zcFpFuuI9Dt9sWHFLH8f-wM`
 - **Active Workflow ID:** `kOFnHIgALKRsK5Z-eSvtL` (Concierge Apple TV)
 
 Example usage:
@@ -68,4 +68,4 @@ curl -X GET "https://n8n.srv1321920.hstgr.cloud/api/v1/workflows" \
 - Use `@FocusState` for focus management
 - LazyVGrid for efficient list rendering
 - Ultra-thin material backgrounds for TV aesthetic
-- Hardcoded location: Kiawah Island (32.6082°N, -80.0848°W)
+- Location configured per-property via n8n/Google Sheet (Latitude, Longitude, NOAAStation columns in VillaData)

@@ -206,6 +206,17 @@ class RentalViewModel: ObservableObject {
     private var lon: Double = -80.6466
     private var noaaStation: String? = nil  // nil = no tides for this location
 
+    // Property ID for multi-property support
+    @Published var propertyId: String {
+        didSet {
+            UserDefaults.standard.set(propertyId, forKey: "propertyId")
+        }
+    }
+
+    init() {
+        self.propertyId = UserDefaults.standard.string(forKey: "propertyId") ?? "Villa01"
+    }
+
     // MARK: - Cache Configuration
     private enum CacheKeys {
         static let rentalData = "cachedRentalData"
@@ -333,9 +344,10 @@ class RentalViewModel: ObservableObject {
         let googleCache = getCachedGoogleData()
         let skipGoogle = googleCache != nil
 
-        let urlString = skipGoogle
-            ? "https://n8n.srv1321920.hstgr.cloud/webhook/kiawah-data?skipGoogle=true"
-            : "https://n8n.srv1321920.hstgr.cloud/webhook/kiawah-data"
+        var urlString = "https://n8n.srv1321920.hstgr.cloud/webhook/kiawah-data?propertyId=\(propertyId)"
+        if skipGoogle {
+            urlString += "&skipGoogle=true"
+        }
 
         print(skipGoogle ? "🌐 Fetching rental data (skipping Google API)" : "🌐 Fetching rental data with Google enrichment")
         guard let url = URL(string: urlString) else { return }
@@ -862,6 +874,12 @@ struct KiawahConciergeView: View {
 
                         NavigationLink(destination: CategoryBrowserView(categories: viewModel.categories, diningSection: viewModel.diningSection)) {
                             DockButton(icon: "mappin.and.ellipse", label: "Explore")
+                        }
+                        .buttonStyle(.card)
+                        .tint(.gray)
+
+                        NavigationLink(destination: PropertySettingsView(viewModel: viewModel)) {
+                            DockButton(icon: "gearshape.fill", label: "Settings")
                         }
                         .buttonStyle(.card)
                         .tint(.gray)
@@ -2279,5 +2297,101 @@ struct WifiModalView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.ultraThinMaterial)
+    }
+}
+
+// MARK: - Property Settings View
+struct PropertySettingsView: View {
+    @ObservedObject var viewModel: RentalViewModel
+    @State private var editingPropertyId: String = ""
+    @State private var showingConfirmation = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.95).ignoresSafeArea()
+
+            VStack(spacing: 40) {
+                Text("Property Settings")
+                    .font(.system(size: 50, weight: .bold))
+                    .foregroundColor(.white)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Current Property ID")
+                        .font(.headline)
+                        .foregroundColor(.gray)
+
+                    Text(viewModel.propertyId)
+                        .font(.system(size: 36, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(12)
+                }
+                .padding(.horizontal, 60)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Change Property ID")
+                        .font(.headline)
+                        .foregroundColor(.gray)
+
+                    TextField("Enter Property ID (e.g., Villa02)", text: $editingPropertyId)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 28))
+                        .padding()
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(12)
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 60)
+
+                HStack(spacing: 30) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.gray)
+
+                    Button("Save & Reload") {
+                        if !editingPropertyId.isEmpty {
+                            showingConfirmation = true
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .disabled(editingPropertyId.isEmpty)
+                }
+                .padding(.top, 20)
+
+                Spacer()
+
+                Text("The Property ID must match a Property_ID in your VillaData sheet.")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .padding(.bottom, 40)
+            }
+            .padding(.top, 60)
+        }
+        .onAppear {
+            editingPropertyId = viewModel.propertyId
+        }
+        .alert("Change Property?", isPresented: $showingConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Change") {
+                viewModel.propertyId = editingPropertyId
+                // Clear cache to force reload with new property
+                UserDefaults.standard.removeObject(forKey: "cachedRentalData")
+                UserDefaults.standard.removeObject(forKey: "cachedRentalDataTimestamp")
+                UserDefaults.standard.removeObject(forKey: "cachedHeroImageData")
+                // Reload data
+                Task {
+                    await viewModel.fetchAllData()
+                }
+                dismiss()
+            }
+        } message: {
+            Text("This will reload all data for property '\(editingPropertyId)'.")
+        }
     }
 }
