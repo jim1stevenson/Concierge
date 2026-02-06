@@ -197,8 +197,8 @@ class RentalViewModel: ObservableObject {
 
     @Published var settleInCards: [SettleInCard] = []
 
-    private let lat = 35.2271
-    private let lon = -80.8431
+    private let lat = 35.1802
+    private let lon = -80.6466
     private let noaaStation = "4460243"
 
     // MARK: - Cache Configuration
@@ -1178,7 +1178,6 @@ struct WeatherDetailView: View {
                 .padding(60)
             }
         }
-        .navigationTitle("Weather")
     }
 
     private func dayName(_ date: Date) -> String {
@@ -1589,26 +1588,28 @@ struct CategoryTile: View {
 struct PlaceCardsView: View {
     let category: PlaceCategory
     @FocusState private var focusedPlaceID: UUID?
-    
+
     private var focusedPlace: LocalRecommendation? {
         category.places.first(where: { $0.id == focusedPlaceID })
     }
-    
+
     var body: some View {
-        ZStack {
-            if let focused = focusedPlace {
-                AsyncImage(url: URL(string: focused.imageURL)) { img in
-                    img.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: { Color.black }
-                .blur(radius: 80)
-                .opacity(0.3)
-                .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.5), value: focusedPlaceID)
-            } else {
-                Color.black.ignoresSafeArea()
-            }
-            
-            VStack(alignment: .leading, spacing: 40) {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                // Background
+                if let focused = focusedPlace {
+                    AsyncImage(url: URL(string: focused.imageURL)) { img in
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: { Color.black }
+                    .blur(radius: 80)
+                    .opacity(0.3)
+                    .ignoresSafeArea()
+                    .animation(.easeInOut(duration: 0.5), value: focusedPlaceID)
+                } else {
+                    Color.black.ignoresSafeArea()
+                }
+
+                // Fixed header - positioned absolutely
                 HStack(spacing: 20) {
                     Image(systemName: category.icon)
                         .font(.system(size: 44))
@@ -1616,9 +1617,10 @@ struct PlaceCardsView: View {
                         .font(.system(size: 60, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 80)
-                .padding(.top, 40)
-                
+                .padding(.leading, 80)
+                .padding(.top, 60)
+
+                // Cards section - positioned below header
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 40) {
                         ForEach(category.places) { place in
@@ -1630,10 +1632,9 @@ struct PlaceCardsView: View {
                         }
                     }
                     .padding(.horizontal, 80)
-                    .padding(.vertical, 40)
                 }
-                
-                Spacer()
+                .padding(.top, 180)
+                .focusSection()
             }
         }
     }
