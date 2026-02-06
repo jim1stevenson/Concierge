@@ -39,6 +39,7 @@ struct RentalDataResponse: Codable {
     let latitude: Double?
     let longitude: Double?
     let noaaStation: String?
+    let timezone: String?  // e.g., "America/New_York"
 }
 
 struct PlaceCategory: Identifiable, Hashable {
@@ -205,6 +206,7 @@ class RentalViewModel: ObservableObject {
     private var lat: Double = 35.1802
     private var lon: Double = -80.6466
     private var noaaStation: String? = nil  // nil = no tides for this location
+    @Published var timezone: String = "America/New_York"  // Property timezone for display
 
     // Property ID for multi-property support
     @Published var propertyId: String {
@@ -435,12 +437,15 @@ class RentalViewModel: ObservableObject {
                 self.lon = longitude
             }
             self.noaaStation = decoded.noaaStation  // nil means no tides for this location
+            if let tz = decoded.timezone, !tz.isEmpty {
+                self.timezone = tz
+            }
         }
     }
     
     // MARK: - Weather (Open-Meteo API)
     func fetchWeather() async {
-        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&temperature_unit=fahrenheit&timezone=America/New_York&forecast_days=7"
+        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&temperature_unit=fahrenheit&timezone=\(timezone)&forecast_days=7"
         guard let url = URL(string: urlString) else { return }
 
         do {
@@ -467,11 +472,11 @@ class RentalViewModel: ObservableObject {
 
             let timeFormatter = DateFormatter()
             timeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
-            timeFormatter.timeZone = TimeZone(identifier: "America/New_York")
+            timeFormatter.timeZone = TimeZone(identifier: timezone) ?? .current
 
             let displayTimeFormatter = DateFormatter()
             displayTimeFormatter.dateFormat = "h:mm a"
-            displayTimeFormatter.timeZone = TimeZone(identifier: "America/New_York")
+            displayTimeFormatter.timeZone = TimeZone(identifier: timezone) ?? .current
 
             var forecastDays: [ForecastDay] = []
             var firstDaySunrise = "--"
@@ -898,7 +903,8 @@ struct KiawahConciergeView: View {
                     temp: viewModel.currentTemp,
                     low: viewModel.currentLow,
                     condition: viewModel.currentCondition,
-                    icon: viewModel.currentIcon
+                    icon: viewModel.currentIcon,
+                    timezone: viewModel.timezone
                 )
                 .padding(40)
             }
@@ -931,16 +937,31 @@ struct WeatherTimeHeader: View {
     let low: Int
     let condition: String
     let icon: String
+    let timezone: String
     @State private var currentTime = Date()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    
+
+    private var timeString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm"
+        formatter.timeZone = TimeZone(identifier: timezone) ?? .current
+        return formatter.string(from: currentTime)
+    }
+
+    private var amPmString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "a"
+        formatter.timeZone = TimeZone(identifier: timezone) ?? .current
+        return formatter.string(from: currentTime)
+    }
+
     var body: some View {
         HStack(spacing: 30) {
             HStack(spacing: 15) {
                 Image(systemName: icon)
                     .renderingMode(.original)
                     .font(.system(size: 40))
-                
+
                 VStack(alignment: .leading) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(temp)°")
@@ -954,14 +975,19 @@ struct WeatherTimeHeader: View {
                         .textCase(.uppercase)
                 }
             }
-            
+
             Rectangle()
                 .fill(.white.opacity(0.3))
                 .frame(width: 2, height: 60)
-            
-            Text(currentTime, style: .time)
-                .font(.system(size: 60, weight: .thin, design: .rounded))
-                .onReceive(timer) { currentTime = $0 }
+
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(timeString)
+                    .font(.system(size: 60, weight: .thin, design: .rounded))
+                Text(amPmString)
+                    .font(.system(size: 24, weight: .light, design: .rounded))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .onReceive(timer) { currentTime = $0 }
         }
         .foregroundColor(.white)
         .padding(40)
