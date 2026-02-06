@@ -1,6 +1,7 @@
 {
   "images" : [
     {
+      "filename" : "sm_con_background.png",
       "idiom" : "tv",
       "scale" : "1x"
     },

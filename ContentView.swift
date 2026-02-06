@@ -35,6 +35,10 @@ struct RentalDataResponse: Codable {
     let places: [LocalRecommendation]
     let settleInCards: [SettleInCard]?
     let dining: DiningSection?
+    // Location for weather/tides (optional - falls back to defaults if not provided)
+    let latitude: Double?
+    let longitude: Double?
+    let noaaStation: String?
 }
 
 struct PlaceCategory: Identifiable, Hashable {
@@ -197,9 +201,10 @@ class RentalViewModel: ObservableObject {
 
     @Published var settleInCards: [SettleInCard] = []
 
-    private let lat = 35.1802
-    private let lon = -80.6466
-    private let noaaStation = "4460243"
+    // Location for weather/tides - defaults used if not provided by backend
+    private var lat: Double = 35.1802
+    private var lon: Double = -80.6466
+    private var noaaStation: String? = nil  // nil = no tides for this location
 
     // MARK: - Cache Configuration
     private enum CacheKeys {
@@ -304,8 +309,11 @@ class RentalViewModel: ObservableObject {
     
     // MARK: - Fetch All Data
     func fetchAllData() async {
+        // Fetch rental data first to get location for weather/tides
+        await fetchRentalData()
+
+        // Now fetch weather and tides in parallel using the location from rental data
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { await self.fetchRentalData() }
             group.addTask { await self.fetchWeather() }
             group.addTask { await self.fetchTides() }
         }
@@ -362,7 +370,10 @@ class RentalViewModel: ObservableObject {
                         intro: dining.intro,
                         heroImage: dining.heroImage,
                         venues: mergedVenues
-                    )
+                    ),
+                    latitude: decoded.latitude,
+                    longitude: decoded.longitude,
+                    noaaStation: decoded.noaaStation
                 )
             } else if let dining = decoded.dining {
                 // Fresh Google data - cache it
@@ -403,6 +414,15 @@ class RentalViewModel: ObservableObject {
             self.categories = sortedCategories + extraCategories
             self.settleInCards = decoded.settleInCards ?? []
             self.diningSection = decoded.dining
+
+            // Update location if provided by backend
+            if let latitude = decoded.latitude {
+                self.lat = latitude
+            }
+            if let longitude = decoded.longitude {
+                self.lon = longitude
+            }
+            self.noaaStation = decoded.noaaStation  // nil means no tides for this location
         }
     }
     
@@ -552,17 +572,24 @@ class RentalViewModel: ObservableObject {
     
     // MARK: - NOAA Tides
     func fetchTides() async {
+        // Skip tides if no NOAA station configured for this location
+        guard let station = noaaStation else {
+            print("🌊 No NOAA station configured - skipping tides")
+            await MainActor.run { self.tidesFetched = true }
+            return
+        }
+
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd"
         let today = dateFormatter.string(from: Date())
-        
-        let urlString = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=\(today)&end_date=\(today)&station=\(noaaStation)&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&format=json&application=KiawahConcierge"
+
+        let urlString = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=\(today)&end_date=\(today)&station=\(station)&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&format=json&application=KiawahConcierge"
         guard let url = URL(string: urlString) else {
             print("❌ Tide Error: Bad URL")
             await MainActor.run { self.tidesFetched = true }
             return
         }
-        
+
         print("🌊 Fetching tides from: \(urlString)")
         
         do {
