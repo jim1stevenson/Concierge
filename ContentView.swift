@@ -27,6 +27,11 @@ struct LocalRecommendation: Identifiable, Codable, Hashable {
     }
 }
 
+struct CategoryConfig: Codable, Hashable {
+    let category: String
+    let heroImage: String
+}
+
 struct RentalDataResponse: Codable {
     let guestName: String
     let heroImage: String
@@ -35,6 +40,7 @@ struct RentalDataResponse: Codable {
     let places: [LocalRecommendation]
     let settleInCards: [SettleInCard]?
     let dining: DiningSection?
+    let categoryConfig: [CategoryConfig]?
     // Location for weather/tides (optional - falls back to defaults if not provided)
     let latitude: Double?
     let longitude: Double?
@@ -156,7 +162,7 @@ struct DiningVenue: Identifiable, Codable, Hashable {
     let mealTimes: [String]
     let shortDescription: String
     let heroImage: String
-    let logoImage: String
+    let websiteURL: String
     let hours: String
     let reservationRequired: Bool?
     let reservationPhone: String
@@ -188,6 +194,7 @@ class RentalViewModel: ObservableObject {
     @Published var recommendations: [LocalRecommendation] = []
     @Published var categories: [PlaceCategory] = []
     @Published var diningSection: DiningSection? = nil
+    @Published var categoryHeroImages: [String: String] = [:]  // category name -> hero image URL
 
     @Published var forecast: [ForecastDay] = []
     @Published var hourlyForecast: [HourlyForecast] = []
@@ -306,7 +313,7 @@ class RentalViewModel: ObservableObject {
                     mealTimes: venue.mealTimes,
                     shortDescription: venue.shortDescription,
                     heroImage: venue.heroImage,
-                    logoImage: venue.logoImage,
+                    websiteURL: venue.websiteURL,
                     hours: venue.hours,
                     reservationRequired: venue.reservationRequired,
                     reservationPhone: venue.reservationPhone,
@@ -385,9 +392,11 @@ class RentalViewModel: ObservableObject {
                         heroImage: dining.heroImage,
                         venues: mergedVenues
                     ),
+                    categoryConfig: decoded.categoryConfig,
                     latitude: decoded.latitude,
                     longitude: decoded.longitude,
-                    noaaStation: decoded.noaaStation
+                    noaaStation: decoded.noaaStation,
+                    timezone: decoded.timezone
                 )
             } else if let dining = decoded.dining {
                 // Fresh Google data - cache it
@@ -418,7 +427,15 @@ class RentalViewModel: ObservableObject {
             .filter { !knownNames.contains($0.key.lowercased()) }
             .map { PlaceCategory(name: $0.key, icon: PlaceCategory.iconFor($0.key), places: $0.value) }
 
-        await MainActor.run { [heroImage] in
+        // Build category hero images dictionary
+        var heroImages: [String: String] = [:]
+        if let configs = decoded.categoryConfig {
+            for config in configs {
+                heroImages[config.category] = config.heroImage
+            }
+        }
+
+        await MainActor.run { [heroImage, heroImages] in
             self.guestName = decoded.guestName
             self.heroImageURL = decoded.heroImage
             self.heroImage = heroImage
@@ -428,6 +445,7 @@ class RentalViewModel: ObservableObject {
             self.categories = sortedCategories + extraCategories
             self.settleInCards = decoded.settleInCards ?? []
             self.diningSection = decoded.dining
+            self.categoryHeroImages = heroImages
 
             // Update location if provided by backend
             if let latitude = decoded.latitude {
@@ -877,7 +895,11 @@ struct KiawahConciergeView: View {
                         .buttonStyle(.card)
                         .tint(.gray)
 
-                        NavigationLink(destination: CategoryBrowserView(categories: viewModel.categories, diningSection: viewModel.diningSection)) {
+                        NavigationLink(destination: CategoryBrowserView(
+                            categories: viewModel.categories,
+                            diningSection: viewModel.diningSection,
+                            categoryHeroImages: viewModel.categoryHeroImages
+                        )) {
                             DockButton(icon: "mappin.and.ellipse", label: "Explore")
                         }
                         .buttonStyle(.card)
@@ -1094,7 +1116,7 @@ struct WeatherDetailView: View {
                     // 3-Hour Forecast
                     Button(action: {}) {
                         VStack(alignment: .leading, spacing: 25) {
-                            Label("Next 24 Hours", systemImage: "clock")
+                            Label("Hourly Forecast", systemImage: "clock")
                                 .font(.system(size: 28, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white.opacity(0.7))
 
@@ -1582,6 +1604,7 @@ struct HowDoIDetailView: View {
 struct CategoryBrowserView: View {
     let categories: [PlaceCategory]
     let diningSection: DiningSection?
+    var categoryHeroImages: [String: String] = [:]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1594,7 +1617,10 @@ struct CategoryBrowserView: View {
                         }
                         .buttonStyle(.card)
                     } else {
-                        NavigationLink(destination: PlaceCardsView(category: category)) {
+                        NavigationLink(destination: PlaceCardsView(
+                            category: category,
+                            heroImageURL: categoryHeroImages[category.name]
+                        )) {
                             CategoryTile(category: category)
                         }
                         .buttonStyle(.card)
@@ -1658,40 +1684,53 @@ struct CategoryTile: View {
 
 struct PlaceCardsView: View {
     let category: PlaceCategory
+    var heroImageURL: String? = nil
     @FocusState private var focusedPlaceID: UUID?
 
     private var focusedPlace: LocalRecommendation? {
         category.places.first(where: { $0.id == focusedPlaceID })
     }
 
+    // Use provided hero image, or fall back to first place's image
+    private var effectiveHeroURL: String {
+        if let hero = heroImageURL, !hero.isEmpty {
+            return hero
+        }
+        return category.coverImageURL
+    }
+
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                // Background
-                if let focused = focusedPlace {
-                    AsyncImage(url: URL(string: focused.imageURL)) { img in
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: { Color.black }
-                    .blur(radius: 80)
-                    .opacity(0.3)
-                    .ignoresSafeArea()
-                    .animation(.easeInOut(duration: 0.5), value: focusedPlaceID)
-                } else {
-                    Color.black.ignoresSafeArea()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 40) {
+                // Hero Section
+                ZStack(alignment: .bottomLeading) {
+                    AsyncImage(url: URL(string: effectiveHeroURL)) { phase in
+                        if let image = phase.image {
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } else {
+                            Color.gray.opacity(0.3)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 450)
+
+                    LinearGradient(
+                        gradient: Gradient(colors: [.clear, .black.opacity(0.8)]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+
+                    HStack(spacing: 20) {
+                        Image(systemName: category.icon)
+                            .font(.system(size: 50))
+                        Text(category.name)
+                            .font(.system(size: 60, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(40)
                 }
 
-                // Fixed header - positioned absolutely
-                HStack(spacing: 20) {
-                    Image(systemName: category.icon)
-                        .font(.system(size: 44))
-                    Text(category.name)
-                        .font(.system(size: 60, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.leading, 80)
-                .padding(.top, 60)
-
-                // Cards section - positioned below header
+                // Places Grid
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 40) {
                         ForEach(category.places) { place in
@@ -1704,8 +1743,23 @@ struct PlaceCardsView: View {
                     }
                     .padding(.horizontal, 80)
                 }
-                .padding(.top, 180)
                 .focusSection()
+
+                Spacer(minLength: 60)
+            }
+        }
+        .background {
+            // Blurred background
+            if let focused = focusedPlace {
+                AsyncImage(url: URL(string: focused.imageURL)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: { Color.black }
+                .blur(radius: 80)
+                .opacity(0.2)
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.5), value: focusedPlaceID)
+            } else {
+                Color.black.ignoresSafeArea()
             }
         }
     }
@@ -1773,7 +1827,7 @@ struct PlaceDetailView: View {
                 VStack(spacing: 50) {
                     AsyncImage(url: URL(string: place.imageURL)) { phase in
                         if let image = phase.image {
-                            image.resizable().aspectRatio(contentMode: .fill)
+                            image.resizable().aspectRatio(contentMode: .fit)
                         } else {
                             ZStack {
                                 Color.gray.opacity(0.1)
@@ -1781,7 +1835,7 @@ struct PlaceDetailView: View {
                             }
                         }
                     }
-                    .frame(width: 1100, height: 550)
+                    .frame(maxWidth: 1100, maxHeight: 550)
                     .clipShape(RoundedRectangle(cornerRadius: 30))
                     .shadow(color: .black.opacity(0.4), radius: 40, x: 0, y: 25)
                     
@@ -1801,30 +1855,40 @@ struct PlaceDetailView: View {
                                 .background(Capsule().fill(Color.blue.opacity(0.15)))
                         }
                         
-                        Text(place.description)
-                            .font(.system(size: 32, weight: .light))
-                            .multilineTextAlignment(.center)
-                            .lineSpacing(10)
-                            .frame(maxWidth: 1000)
-                            .foregroundColor(.primary.opacity(0.9))
-                            .padding(.top, 10)
-                        
-                        HStack(spacing: 20) {
-                            Image(systemName: "mappin.circle.fill")
-                                .font(.system(size: 40))
-                                .foregroundColor(.blue)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Address")
-                                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                                    .foregroundColor(.secondary)
-                                    .textCase(.uppercase)
-                                Text(place.address)
-                                    .font(.system(size: 28, weight: .medium, design: .rounded))
-                                    .foregroundColor(.primary)
+                        // Description - focusable and scrollable for long text
+                        Button(action: {}) {
+                            ScrollView {
+                                Text(place.description)
+                                    .font(.system(size: 32, weight: .light))
+                                    .multilineTextAlignment(.center)
+                                    .lineSpacing(10)
+                                    .foregroundColor(.primary.opacity(0.9))
                             }
+                            .frame(maxWidth: 1000, maxHeight: 300)
+                            .padding(30)
                         }
-                        .padding(30)
-                        .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial))
+                        .buttonStyle(.card)
+                        .padding(.top, 10)
+
+                        Button(action: {}) {
+                            HStack(spacing: 20) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.blue)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Address")
+                                        .font(.system(size: 18, weight: .medium, design: .rounded))
+                                        .foregroundColor(.secondary)
+                                        .textCase(.uppercase)
+                                    Text(place.address)
+                                        .font(.system(size: 28, weight: .medium, design: .rounded))
+                                        .foregroundColor(.primary)
+                                }
+                            }
+                            .padding(30)
+                            .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial))
+                        }
+                        .buttonStyle(.card)
                         .padding(.top, 20)
                     }
                     
@@ -1880,13 +1944,13 @@ struct DiningCollectionView: View {
                 ZStack(alignment: .bottomLeading) {
                     AsyncImage(url: URL(string: diningSection.heroImage)) { phase in
                         if let image = phase.image {
-                            image.resizable().aspectRatio(contentMode: .fill)
+                            image.resizable().aspectRatio(contentMode: .fit)
                         } else {
                             Color.gray.opacity(0.3)
                         }
                     }
-                    .frame(height: 400)
-                    .clipped()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 450)
 
                     LinearGradient(
                         gradient: Gradient(colors: [.clear, .black.opacity(0.8)]),
@@ -1970,19 +2034,6 @@ struct DiningVenueCard: View {
                 }
                 .frame(width: 420, height: 240)
                 .clipped()
-
-                // Logo in corner
-                if !venue.logoImage.isEmpty {
-                    AsyncImage(url: URL(string: venue.logoImage)) { phase in
-                        if let image = phase.image {
-                            image.resizable().aspectRatio(contentMode: .fit)
-                        }
-                    }
-                    .frame(width: 70, height: 70)
-                    .background(Circle().fill(.white))
-                    .clipShape(Circle())
-                    .padding(15)
-                }
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -2044,7 +2095,7 @@ struct DiningVenueDetailView: View {
                         ZStack(alignment: .bottomLeading) {
                             AsyncImage(url: URL(string: venue.heroImage)) { phase in
                                 if let image = phase.image {
-                                    image.resizable().aspectRatio(contentMode: .fill)
+                                    image.resizable().aspectRatio(contentMode: .fit)
                                 } else {
                                     ZStack {
                                         Color.gray.opacity(0.1)
@@ -2052,23 +2103,9 @@ struct DiningVenueDetailView: View {
                                     }
                                 }
                             }
-                            .frame(width: 1200, height: 500)
-                            .clipped()
+                            .frame(maxWidth: 1200, maxHeight: 500)
                             .clipShape(RoundedRectangle(cornerRadius: 30))
 
-                            // Logo overlay
-                            if !venue.logoImage.isEmpty {
-                                AsyncImage(url: URL(string: venue.logoImage)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().aspectRatio(contentMode: .fit)
-                                    }
-                                }
-                                .frame(width: 120, height: 120)
-                                .background(Circle().fill(.white))
-                                .clipShape(Circle())
-                                .shadow(color: .black.opacity(0.3), radius: 10)
-                                .padding(30)
-                            }
                         }
                         .shadow(color: .black.opacity(0.4), radius: 40, x: 0, y: 25)
                     }
@@ -2095,16 +2132,7 @@ struct DiningVenueDetailView: View {
 
                             // Hours
                             if !venue.hours.isEmpty {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "clock.fill")
-                                        .foregroundColor(.orange)
-                                    Text(venue.hours)
-                                        .font(.system(size: 20, weight: .light))
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal, 30)
-                                .padding(.vertical, 15)
-                                .background(RoundedRectangle(cornerRadius: 15).fill(.ultraThinMaterial))
+                                HoursGridView(hours: venue.hours)
                             }
 
                             // Cuisine tags
@@ -2165,6 +2193,36 @@ struct DiningVenueDetailView: View {
                             }
                             .padding(35)
                             .frame(maxWidth: 600)
+                            .background(RoundedRectangle(cornerRadius: 25).fill(.ultraThinMaterial))
+                        }
+                        .buttonStyle(.card)
+                    }
+
+                    // Website QR Code
+                    if !venue.websiteURL.isEmpty {
+                        Button(action: {}) {
+                            VStack(spacing: 20) {
+                                Label("Visit Website", systemImage: "qrcode")
+                                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.primary)
+
+                                Text("Scan to view menu & more")
+                                    .font(.system(size: 18, weight: .light))
+                                    .foregroundColor(.secondary)
+
+                                AsyncImage(url: URL(string: "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=\(venue.websiteURL.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")) { phase in
+                                    if let image = phase.image {
+                                        image.resizable().interpolation(.none).aspectRatio(contentMode: .fit)
+                                    } else {
+                                        ProgressView()
+                                    }
+                                }
+                                .frame(width: 180, height: 180)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .padding(35)
+                            .frame(maxWidth: 400)
                             .background(RoundedRectangle(cornerRadius: 25).fill(.ultraThinMaterial))
                         }
                         .buttonStyle(.card)
@@ -2247,12 +2305,11 @@ struct DiningVenueDetailView: View {
                                                     Text(review.text)
                                                         .font(.system(size: 18, weight: .light))
                                                         .foregroundColor(.primary.opacity(0.85))
-                                                        .lineLimit(5)
                                                         .multilineTextAlignment(.leading)
                                                         .lineSpacing(4)
                                                 }
                                                 .padding(25)
-                                                .frame(width: 400, alignment: .topLeading)
+                                                .frame(width: 500, alignment: .topLeading)
                                                 .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial))
                                             }
                                             .buttonStyle(.card)
@@ -2288,6 +2345,47 @@ struct DiningVenueDetailView: View {
 // =============================================================
 // MARK: - HELPER VIEWS
 // =============================================================
+
+struct HoursGridView: View {
+    let hours: String
+
+    private var parsedHours: [(day: String, time: String)] {
+        hours.components(separatedBy: "\n")
+            .compactMap { line -> (String, String)? in
+                let parts = line.components(separatedBy: ": ")
+                guard parts.count >= 2 else { return nil }
+                return (parts[0], parts.dropFirst().joined(separator: ": "))
+            }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "clock.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.orange)
+                Text("Hours")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundColor(.primary)
+            }
+            .padding(.bottom, 8)
+
+            ForEach(parsedHours, id: \.day) { entry in
+                HStack(alignment: .top, spacing: 0) {
+                    Text(entry.day)
+                        .font(.system(size: 18, weight: .medium, design: .rounded))
+                        .foregroundColor(.primary)
+                        .frame(width: 120, alignment: .leading)
+                    Text(entry.time)
+                        .font(.system(size: 18, weight: .light))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(25)
+        .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial))
+    }
+}
 
 struct WifiModalView: View {
     let ssid: String
